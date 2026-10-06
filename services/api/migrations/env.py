@@ -11,12 +11,23 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from twin_core.db import Base
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# ORM metadata arrives with the first tables (stage M1); until then migrations are hand-written.
-target_metadata = None
+# Models live in twin_core.db (shared by api, engine, collector). TimescaleDB objects (hypertables,
+# compression/retention policies, continuous aggregates) are written by hand in the revisions.
+target_metadata = Base.metadata
+_TIMESCALE_VIEWS = frozenset({"telemetry_15m", "telemetry_1h"})
+
+
+def include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object | None
+) -> bool:
+    """Keep autogenerate away from objects TimescaleDB manages (continuous aggregates)."""
+    return not (type_ == "table" and name in _TIMESCALE_VIEWS)
 
 
 def _database_url() -> str:
@@ -33,6 +44,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=_database_url(),
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -41,7 +53,9 @@ def run_migrations_offline() -> None:
 
 
 def _run_sync(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, include_object=include_object
+    )
     with context.begin_transaction():
         context.run_migrations()
 

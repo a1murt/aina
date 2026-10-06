@@ -1,13 +1,16 @@
 [project]
 name = "twin-core"
 version = "0.1.0"
-description = "Qost Twin shared core: plant config, domain, clock, calendar"
+description = "Qost Twin shared core: plant config, domain, clock, calendar, KPI, DQ, rules, import, DB schema"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "openpyxl>=3.1",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "python-docx>=1.1",
     "pyyaml>=6.0",
     "redis>=5.2",
+    "sqlalchemy[asyncio]>=2.0.36",
     "structlog>=24.4",
     # Asia/Qostanay switched to UTC+5 on 2024-03-01: tzdata 2024a (= PyPI 2024.1) or newer.
     "tzdata>=2024.1",

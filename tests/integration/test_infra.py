@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -30,7 +31,7 @@ REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/0")
 MQTT_HOST = os.environ.get("TEST_MQTT_HOST", "localhost")
 
 
-def test_alembic_upgrade_enables_timescaledb(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_alembic_upgrade_to_head_enables_timescaledb(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", DATABASE_URL)
     config = Config(str(REPO_ROOT / "services/api/alembic.ini"))
     command.upgrade(config, "head")
@@ -47,7 +48,7 @@ def test_alembic_upgrade_enables_timescaledb(monkeypatch: pytest.MonkeyPatch) ->
 
     extversion, revision = asyncio.run(query())
     assert extversion is not None
-    assert revision == "0001"
+    assert revision == ScriptDirectory.from_config(config).get_current_head()
 
 
 async def test_sim_clock_over_real_redis() -> None:
