@@ -1,0 +1,9 @@
+# pnpm settings for the web app (single package, not a multi-package workspace).
+# Dependency install scripts run only when allowed here. All three ship prebuilt native binaries
+# as optional platform packages, so their install scripts are not needed:
+#   @parcel/watcher, @swc/core — next-intl's optional message-extraction tooling;
+#   unrs-resolver — import resolver used by eslint-config-next.
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false
+  unrs-resolver: false

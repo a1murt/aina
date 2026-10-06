@@ -1,0 +1,182 @@
+# Qost Twin — one host, one command (SPEC §4.5, NFR-08).
+#   make up                 infrastructure only: timescaledb, redis, mqtt (no profile)
+#   make up PROFILE=demo    + every service including the virtual plant (sim)
+#   make up PROFILE=prod    + every service except sim (collector reads config/tag_map.yaml)
+# Secrets and URLs come from .env (copied from .env.example by `make up`).
+
+name: qost
+
+x-python-service: &python-service
+  build: &python-build
+    context: .
+    dockerfile: infra/python.Dockerfile
+  env_file:
+    - path: .env
+      required: false
+  environment: &python-env
+    PLANT_CONFIG_DIR: /app/config
+  volumes:
+    - ./config:/app/config:ro
+  restart: unless-stopped
+  depends_on: &infra-healthy
+    timescaledb:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    mqtt:
+      condition: service_healthy
+
+x-healthcheck-timing: &healthcheck-timing
+  interval: 10s
+  timeout: 5s
+  retries: 6
+  start_period: 15s
+
+services:
+  # ------------------------------------------------------------------ infrastructure
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-qost}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qost}
+      POSTGRES_DB: ${POSTGRES_DB:-qost}
+      # timescaledb-tune sizes PostgreSQL for this budget instead of the whole Docker VM.
+      TS_TUNE_MEMORY: 1GB
+      TS_TUNE_NUM_CPUS: "2"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      <<: *healthcheck-timing
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1000", "--maxmemory", "512mb"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      <<: *healthcheck-timing
+    restart: unless-stopped
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./infra/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$$SYS/broker/version", "-C", "1", "-W", "5"]
+      <<: *healthcheck-timing
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ services
+  sim:
+    <<: *python-service
+    profiles: ["demo"]
+    build:
+      <<: *python-build
+      args: { PACKAGE: qost-sim }
+    image: qost/sim:dev
+    command: ["python", "-m", "qost_sim"]
+    ports:
+      - "4840:4840"   # OPC UA
+      - "8100:8100"   # demo control API
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8100/healthz', timeout=3)"]
+      <<: *healthcheck-timing
+
+  collector:
+    <<: *python-service
+    profiles: ["demo", "prod"]
+    build:
+      <<: *python-build
+      args: { PACKAGE: qost-collector }
+    image: qost/collector:dev
+    command: ["python", "-m", "qost_collector"]
+    environment:
+      <<: *python-env
+      COLLECTOR_SPOOL_DIR: /var/lib/qost/spool
+    volumes:
+      - ./config:/app/config:ro
+      - collector-spool:/var/lib/qost/spool
+    depends_on:
+      <<: *infra-healthy
+      sim:
+        condition: service_healthy
+        required: false   # absent in the prod profile
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8110/healthz', timeout=3)"]
+      <<: *healthcheck-timing
+
+  engine:
+    <<: *python-service
+    profiles: ["demo", "prod"]
+    build:
+      <<: *python-build
+      args: { PACKAGE: qost-engine }
+    image: qost/engine:dev
+    command: ["python", "-m", "qost_engine"]
+    volumes:
+      - ./config:/app/config:ro
+      - ml-models:/app/ml/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8120/healthz', timeout=3)"]
+      <<: *healthcheck-timing
+
+  api:
+    <<: *python-service
+    profiles: ["demo", "prod"]
+    build:
+      <<: *python-build
+      args: { PACKAGE: qost-api }
+    image: qost/api:dev
+    command: ["python", "-m", "qost_api"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config:/app/config:ro
+      - ml-models:/app/ml/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      <<: *healthcheck-timing
+
+  notifier:
+    <<: *python-service
+    profiles: ["demo", "prod"]
+    build:
+      <<: *python-build
+      args: { PACKAGE: qost-notifier }
+    image: qost/notifier:dev
+    command: ["python", "-m", "qost_notifier"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8130/healthz', timeout=3)"]
+      <<: *healthcheck-timing
+
+  web:
+    profiles: ["demo", "prod"]
+    build:
+      context: web
+    image: qost/web:dev
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      <<: *healthcheck-timing
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  collector-spool:
+  ml-models:
