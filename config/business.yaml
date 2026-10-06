@@ -1,0 +1,16 @@
+# Параметры оценки экономического эффекта. assumption: true — допущение команды,
+# в UI помечается бейджем «допущение» и редактируется. Эффект считать через маржу, не через выручку.
+version: 1
+currency: KZT
+params:
+  avg_price_kzt:        { value: 7000000, assumption: false, source: "Розничные цены Cobalt 7.29 млн ₸ и Onix от 6.99 млн ₸, kun.uz, 28.06.2025" }
+  margin_rate:          { value: 0.10,    assumption: true,  note: "Маржа завода на машину; заменить данными Аллюра" }
+  rework_cost_kzt:      { value: { WELD: 40000, PAINT: 120000, ASSY: 25000, QC: 30000 }, assumption: true }
+  saturday_shift_cost_kzt: { value: 12000000, assumption: true, note: "Стоимость дополнительной смены (ФОТ + энергия)" }
+improvement_defaults:   # консервативные допущения для сценария «с системой» — не обещания
+  mttr_reduction: 0.15             # быстрее реакция: андон + оповещения + наряды
+  unplanned_failure_reduction: 0.20  # предиктивное ТО на оборудовании классов A/B
+  filter_policy: predictive_shift_change
+  paint_defect_rate_target: 0.03
+reporting:
+  show_revenue: false              # выручку не показывать как эффект; только маржа и «машины»

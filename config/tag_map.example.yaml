@@ -1,0 +1,35 @@
+# Контракт интеграции с реальным заводом: соответствие тегов OPC UA / топиков MQTT объектам модели.
+# Для демо карта генерируется автоматически из plant.yaml (services/sim публикует ровно эти NodeId).
+# На пилоте инженеры заказчика заполняют этот файл по реальному списку тегов SCADA/PLC.
+# Доступ только на чтение: коллектор не вызывает write ни при каких условиях (SPEC §7.4).
+version: 1
+opcua:
+  endpoint: "opc.tcp://sim:4840/qost/"          # пилот: адрес OPC UA-сервера SCADA/шлюза
+  security: { mode: None, policy: None }         # пилот: SignAndEncrypt / Basic256Sha256 + сертификаты
+  namespace_uri: "urn:qost:twin:plant"
+  publishing_interval_ms: 500
+  # шаблон NodeId для демо: ns=2;s=KST.{AREA}.{LINE}.{EQUIPMENT}.{SIGNAL}
+  nodes:
+    - { node_id: "ns=2;s=KST.ASSY.ASSY-1.CONV-03.State",                equipment: CONV-03, signal: state }
+    - { node_id: "ns=2;s=KST.ASSY.ASSY-1.CONV-03.AlarmCode",            equipment: CONV-03, signal: alarm_code }
+    - { node_id: "ns=2;s=KST.ASSY.ASSY-1.CONV-03.motor_current_a",      equipment: CONV-03, signal: motor_current_a }
+    - { node_id: "ns=2;s=KST.ASSY.ASSY-1.CONV-03.vibration_mm_s",       equipment: CONV-03, signal: vibration_mm_s }
+    - { node_id: "ns=2;s=KST.ASSY.ASSY-1.CONV-03.chain_elongation_pct", equipment: CONV-03, signal: chain_elongation_pct }
+    - { node_id: "ns=2;s=KST.ASSY.ASSY-1.GoodCount",                    line: ASSY-1,       signal: good_count }
+    - { node_id: "ns=2;s=KST.ASSY.ASSY-1.RejectCount",                  line: ASSY-1,       signal: reject_count }
+    - { node_id: "ns=2;s=KST.BUFFERS.PBS.Level",                        buffer: PBS,        signal: level }
+    # … полный список генерируется командой: make tagmap
+  state_enum:   # значения тега State → состояние модели (SPEC §5.3)
+    0: IDLE_NO_PLAN
+    1: RUNNING
+    2: STARVED
+    3: BLOCKED
+    4: DOWN_UNPLANNED
+    5: DOWN_PLANNED
+    6: DEGRADED
+    7: CHANGEOVER
+mqtt:
+  url: "mqtt://mqtt:1883"
+  # Unified Namespace (ISA-95): qost/v1/{site}/{area}/{line}/{equipment}/{signal}
+  topic_root: "qost/v1/KST"
+  payload: json   # {"ts": "...Z", "value": 12.3, "quality": "good"}

@@ -1,0 +1,59 @@
+# Дерево причин простоев. planned=true — исключается из планового времени (ISO 22400: PDOT).
+# bucket: own — потеря доступности оборудования; external — внешняя причина (материалы, организация).
+# aliases — формулировки из внешних журналов (используются при импорте). kk — черновой перевод.
+version: 1
+categories:
+  - code: PM
+    name_ru: "Плановое обслуживание"
+    name_kk: "Жоспарлы қызмет көрсету"
+    reasons:
+      - { code: PM-SCHEDULED, name_ru: "Плановое ТО",      name_kk: "Жоспарлы ТҚ",          planned: true, bucket: own, aliases: ["Плановое ТО", "ППР"] }
+      - { code: PM-CLEANING,  name_ru: "Плановая чистка",  name_kk: "Жоспарлы тазалау",     planned: true, bucket: own }
+  - code: MT
+    name_ru: "Обслуживание по состоянию"
+    name_kk: "Жағдай бойынша қызмет"
+    reasons:
+      - { code: MT-FILTER,     name_ru: "Замена фильтра",          name_kk: "Сүзгіні ауыстыру",              planned: false, bucket: own, aliases: ["Замена фильтра"] }
+      - { code: MT-CONSUMABLE, name_ru: "Замена расходников",      name_kk: "Шығын материалдарын ауыстыру",  planned: false, bucket: own, aliases: ["Замена электродов", "Замена наконечников"] }
+  - code: ME
+    name_ru: "Механика"
+    name_kk: "Механика"
+    reasons:
+      - { code: ME-CHAIN,   name_ru: "Обрыв цепи",          name_kk: "Шынжырдың үзілуі",   planned: false, bucket: own, aliases: ["Обрыв цепи"] }
+      - { code: ME-BEARING, name_ru: "Подшипник / редуктор", name_kk: "Мойынтірек / редуктор", planned: false, bucket: own }
+      - { code: ME-JAM,     name_ru: "Заклинивание",        name_kk: "Кептеліп қалу",      planned: false, bucket: own }
+  - code: EL
+    name_ru: "Электрика и КИПиА"
+    name_kk: "Электр және БӨАЖ"
+    reasons:
+      - { code: EL-SENSOR, name_ru: "Ошибка датчика",              name_kk: "Датчик қатесі",                  planned: false, bucket: own, aliases: ["Ошибка датчика"] }
+      - { code: EL-DRIVE,  name_ru: "Привод / частотник",          name_kk: "Жетек / жиілік түрлендіргіш",    planned: false, bucket: own }
+      - { code: EL-PLC,    name_ru: "Контроллер / связь",          name_kk: "Контроллер / байланыс",          planned: false, bucket: own }
+  - code: RB
+    name_ru: "Роботы"
+    name_kk: "Роботтар"
+    reasons:
+      - { code: RB-COLLISION, name_ru: "Столкновение / сбой траектории", name_kk: "Соқтығыс / траектория ақауы", planned: false, bucket: own }
+      - { code: RB-TOOL,      name_ru: "Сварочные клещи / инструмент",   name_kk: "Дәнекерлеу қысқыштары",       planned: false, bucket: own }
+  - code: MAT
+    name_ru: "Материалы и логистика"
+    name_kk: "Материалдар және логистика"
+    reasons:
+      - { code: MAT-SHORTAGE, name_ru: "Нет комплектующих",       name_kk: "Құрамдас бөліктер жоқ",            planned: false, bucket: external }
+      - { code: MAT-QUALITY,  name_ru: "Брак комплектующих",      name_kk: "Құрамдас бөліктердің ақауы",       planned: false, bucket: external }
+  - code: ORG
+    name_ru: "Организационные"
+    name_kk: "Ұйымдастырушылық"
+    reasons:
+      - { code: ORG-NO-OPERATOR, name_ru: "Нет оператора",   name_kk: "Оператор жоқ",                planned: false, bucket: external }
+      - { code: ORG-WAIT-QC,     name_ru: "Ожидание ОТК",    name_kk: "Сапа бақылауын күту",         planned: false, bucket: external }
+  - code: QLT
+    name_ru: "Качество"
+    name_kk: "Сапа"
+    reasons:
+      - { code: QLT-REWORK-STOP, name_ru: "Остановка для доработки", name_kk: "Түзетуге арналған тоқтау", planned: false, bucket: own }
+  - code: UNK
+    name_ru: "Не классифицировано"
+    name_kk: "Жіктелмеген"
+    reasons:
+      - { code: UNK, name_ru: "Причина не указана", name_kk: "Себебі көрсетілмеген", planned: false, bucket: own }
