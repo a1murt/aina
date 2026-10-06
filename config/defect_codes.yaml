@@ -1,0 +1,20 @@
+# Коды дефектов по участкам. disposition по умолчанию: rework (доработка) | scrap (списание).
+# repaint=true — дефект окраски требует полной перекраски: кузов повторно проходит камеры (съедает ёмкость узкого места).
+version: 1
+defects:
+  - { code: W-SPOT,     area: WELD,  name_ru: "Непровар / качество сварной точки", name_kk: "Дәнекерлеу нүктесінің ақауы", disposition: rework, rework_min: 15 }
+  - { code: W-GEOM,     area: WELD,  name_ru: "Отклонение геометрии кузова",       name_kk: "Шанақ геометриясының ауытқуы", disposition: rework, rework_min: 30 }
+  - { code: W-SPATTER,  area: WELD,  name_ru: "Брызги / наплывы",                  name_kk: "Шашырау / ағын",              disposition: rework, rework_min: 8 }
+  - { code: P-DUST,     area: PAINT, name_ru: "Включения / сор",                   name_kk: "Қоқыс қосындылары",           disposition: rework, rework_min: 20, repaint: false }
+  - { code: P-RUN,      area: PAINT, name_ru: "Потёки",                            name_kk: "Ағындар",                     disposition: rework, rework_min: 25, repaint: false }
+  - { code: P-ORANGE,   area: PAINT, name_ru: "Шагрень",                           name_kk: "Шагрень",                     disposition: rework, rework_min: 20, repaint: false }
+  - { code: P-THIN,     area: PAINT, name_ru: "Непрокрас / тонкий слой",           name_kk: "Жұқа қабат",                  disposition: rework, rework_min: 0,  repaint: true }
+  - { code: P-COLOR,    area: PAINT, name_ru: "Отклонение цвета",                  name_kk: "Түс ауытқуы",                 disposition: rework, rework_min: 0,  repaint: true }
+  - { code: A-TORQUE,   area: ASSY,  name_ru: "Момент затяжки",                    name_kk: "Тарту моменті",               disposition: rework, rework_min: 5 }
+  - { code: A-MISSING,  area: ASSY,  name_ru: "Некомплект",                        name_kk: "Толық емес жиынтық",          disposition: rework, rework_min: 10 }
+  - { code: A-ELECTRIC, area: ASSY,  name_ru: "Электрика / разъёмы",               name_kk: "Электр / қосқыштар",          disposition: rework, rework_min: 15 }
+  - { code: A-SCRATCH,  area: ASSY,  name_ru: "Повреждение ЛКП при сборке",        name_kk: "Бояу қабатының зақымдануы",   disposition: rework, rework_min: 20 }
+  - { code: Q-ALIGN,    area: QC,    name_ru: "Развал-схождение вне допуска",      name_kk: "Дөңгелек бұрыштары ауытқуы",  disposition: rework, rework_min: 15 }
+  - { code: Q-LEAK,     area: QC,    name_ru: "Протечка (дождевание)",             name_kk: "Су өткізу",                   disposition: rework, rework_min: 30 }
+  - { code: Q-BRAKE,    area: QC,    name_ru: "Тормоза вне допуска",               name_kk: "Тежегіш ауытқуы",             disposition: rework, rework_min: 20 }
+  - { code: X-UNKNOWN,  area: ANY,   name_ru: "Тип не указан",                     name_kk: "Түрі көрсетілмеген",          disposition: rework, rework_min: 15 }

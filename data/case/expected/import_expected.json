@@ -1,0 +1,443 @@
+{
+  "meta": {
+    "source": "data/case/source/case2_data.docx",
+    "ict_seconds": 233,
+    "ict_seconds_bdr": 233.5135,
+    "shift_minutes": 480,
+    "assumptions": [
+      "line table = one shift (A)",
+      "downtime log is per day, shift unknown",
+      "defects are rework (produced counts include defective units)",
+      "pdot=0 for imported shifts because planned downtime cannot be attributed to a shift"
+    ],
+    "float_tolerance": 0.0001
+  },
+  "constraints_parsed": {
+    "shifts_per_day": 2,
+    "shift_hours": 8,
+    "oee_target": 0.85,
+    "defect_rate_limit": 0.02,
+    "critical_downtime_limit_min_per_day": 60,
+    "plant_target_per_month": 5500
+  },
+  "shift_reports": [
+    {
+      "date": "2026-10-01",
+      "shift": "A",
+      "line": "WELD-1",
+      "area": "WELD",
+      "plan_qty": 120,
+      "produced_qty": 118,
+      "defect_qty": 2,
+      "good_qty": 116,
+      "worked_min": 468.0,
+      "reported_load_pct": 98.0,
+      "reported_defect_pct": 1.7,
+      "pot_min": 480,
+      "pdot_min": 0,
+      "pbt_min": 480,
+      "apt_min": 468.0,
+      "lost_min": 12.0,
+      "availability": 0.975,
+      "effectiveness": 0.9791,
+      "quality_ratio": 0.9831,
+      "oee": 0.9385,
+      "defect_rate": 0.0169,
+      "fpy": 0.9831
+    },
+    {
+      "date": "2026-10-01",
+      "shift": "A",
+      "line": "PAINT-1",
+      "area": "PAINT",
+      "plan_qty": 120,
+      "produced_qty": 115,
+      "defect_qty": 4,
+      "good_qty": 111,
+      "worked_min": 450.0,
+      "reported_load_pct": 94.0,
+      "reported_defect_pct": 3.5,
+      "pot_min": 480,
+      "pdot_min": 0,
+      "pbt_min": 480,
+      "apt_min": 450.0,
+      "lost_min": 30.0,
+      "availability": 0.9375,
+      "effectiveness": 0.9924,
+      "quality_ratio": 0.9652,
+      "oee": 0.898,
+      "defect_rate": 0.0348,
+      "fpy": 0.9652
+    },
+    {
+      "date": "2026-10-01",
+      "shift": "A",
+      "line": "ASSY-1",
+      "area": "ASSY",
+      "plan_qty": 120,
+      "produced_qty": 121,
+      "defect_qty": 1,
+      "good_qty": 120,
+      "worked_min": 480.0,
+      "reported_load_pct": 100.0,
+      "reported_defect_pct": 0.8,
+      "pot_min": 480,
+      "pdot_min": 0,
+      "pbt_min": 480,
+      "apt_min": 480.0,
+      "lost_min": 0.0,
+      "availability": 1.0,
+      "effectiveness": 0.9789,
+      "quality_ratio": 0.9917,
+      "oee": 0.9708,
+      "defect_rate": 0.0083,
+      "fpy": 0.9917
+    },
+    {
+      "date": "2026-10-02",
+      "shift": "A",
+      "line": "WELD-1",
+      "area": "WELD",
+      "plan_qty": 120,
+      "produced_qty": 111,
+      "defect_qty": 3,
+      "good_qty": 108,
+      "worked_min": 432.0,
+      "reported_load_pct": 91.0,
+      "reported_defect_pct": 2.7,
+      "pot_min": 480,
+      "pdot_min": 0,
+      "pbt_min": 480,
+      "apt_min": 432.0,
+      "lost_min": 48.0,
+      "availability": 0.9,
+      "effectiveness": 0.9978,
+      "quality_ratio": 0.973,
+      "oee": 0.8738,
+      "defect_rate": 0.027,
+      "fpy": 0.973
+    },
+    {
+      "date": "2026-10-02",
+      "shift": "A",
+      "line": "PAINT-1",
+      "area": "PAINT",
+      "plan_qty": 120,
+      "produced_qty": 116,
+      "defect_qty": 6,
+      "good_qty": 110,
+      "worked_min": 462.0,
+      "reported_load_pct": 96.0,
+      "reported_defect_pct": 5.2,
+      "pot_min": 480,
+      "pdot_min": 0,
+      "pbt_min": 480,
+      "apt_min": 462.0,
+      "lost_min": 18.0,
+      "availability": 0.9625,
+      "effectiveness": 0.975,
+      "quality_ratio": 0.9483,
+      "oee": 0.8899,
+      "defect_rate": 0.0517,
+      "fpy": 0.9483
+    },
+    {
+      "date": "2026-10-02",
+      "shift": "A",
+      "line": "ASSY-1",
+      "area": "ASSY",
+      "plan_qty": 120,
+      "produced_qty": 119,
+      "defect_qty": 2,
+      "good_qty": 117,
+      "worked_min": 474.0,
+      "reported_load_pct": 99.0,
+      "reported_defect_pct": 1.7,
+      "pot_min": 480,
+      "pdot_min": 0,
+      "pbt_min": 480,
+      "apt_min": 474.0,
+      "lost_min": 6.0,
+      "availability": 0.9875,
+      "effectiveness": 0.9749,
+      "quality_ratio": 0.9832,
+      "oee": 0.9466,
+      "defect_rate": 0.0168,
+      "fpy": 0.9832
+    }
+  ],
+  "downtime": [
+    {
+      "date": "2026-10-01",
+      "area": "WELD",
+      "equipment": "ABB-01",
+      "reason_code": "EL-SENSOR",
+      "reason_text_src": "Ошибка датчика",
+      "planned": false,
+      "duration_min": 25.0,
+      "shift": null,
+      "criticality": "B",
+      "degraded_capacity": 0.5,
+      "effective_capacity_loss_min": 12.5,
+      "capacity_loss_units": 3.2189
+    },
+    {
+      "date": "2026-10-01",
+      "area": "PAINT",
+      "equipment": "BOOTH-02",
+      "reason_code": "MT-FILTER",
+      "reason_text_src": "Замена фильтра",
+      "planned": false,
+      "duration_min": 40.0,
+      "shift": null,
+      "criticality": "A",
+      "degraded_capacity": 0.0,
+      "effective_capacity_loss_min": 40.0,
+      "capacity_loss_units": 10.3004
+    },
+    {
+      "date": "2026-10-02",
+      "area": "ASSY",
+      "equipment": "CONV-03",
+      "reason_code": "ME-CHAIN",
+      "reason_text_src": "Обрыв цепи",
+      "planned": false,
+      "duration_min": 55.0,
+      "shift": null,
+      "criticality": "A",
+      "degraded_capacity": 0.0,
+      "effective_capacity_loss_min": 55.0,
+      "capacity_loss_units": 14.1631
+    },
+    {
+      "date": "2026-10-02",
+      "area": "WELD",
+      "equipment": "ABB-04",
+      "reason_code": "PM-SCHEDULED",
+      "reason_text_src": "Плановое ТО",
+      "planned": true,
+      "duration_min": 30.0,
+      "shift": null,
+      "criticality": "B",
+      "degraded_capacity": 0.5,
+      "effective_capacity_loss_min": 0.0,
+      "capacity_loss_units": 0.0
+    }
+  ],
+  "plan": {
+    "rows": [
+      {
+        "model": "ONIX",
+        "model_src": "Chevrolet Onix",
+        "qty": 2500
+      },
+      {
+        "model": "COBALT",
+        "model_src": "Chevrolet Cobalt",
+        "qty": 1800
+      },
+      {
+        "model": "J7",
+        "model_src": "JAC J7",
+        "qty": 500
+      }
+    ],
+    "line_model_total": 4800,
+    "plant_target": 5500,
+    "gap": -700,
+    "working_days_oct_2026": 21,
+    "shifts_oct_2026": 42,
+    "required_rate_per_shift_line_plan": 114.2857,
+    "required_rate_per_shift_target": 130.9524,
+    "mean_sustainable_rate_per_shift": 113.0,
+    "naive_month_projection": 4746
+  },
+  "flow": {
+    "produced_total": {
+      "WELD": 229,
+      "PAINT": 231,
+      "ASSY": 240
+    },
+    "good_total": {
+      "WELD": 224,
+      "PAINT": 221,
+      "ASSY": 237
+    },
+    "mean_produced_per_shift": {
+      "WELD": 114.5,
+      "PAINT": 115.5,
+      "ASSY": 120.0
+    }
+  },
+  "bottleneck_aggregate": {
+    "by_day": {
+      "2026-10-01": "PAINT",
+      "2026-10-02": "WELD"
+    },
+    "overall": "WELD",
+    "shifting": true
+  },
+  "data_quality_issues": [
+    {
+      "rule_id": "DQ-01",
+      "severity": "info",
+      "entity": "WELD-1",
+      "date": "2026-10-02",
+      "details": {
+        "reported_load_pct": 91.0,
+        "computed_availability_pct": 90.0,
+        "diff_pp": 1.0
+      }
+    },
+    {
+      "rule_id": "DQ-02",
+      "severity": "warning",
+      "entity": "WELD",
+      "date": "2026-10-01",
+      "details": {
+        "logged_downtime_min": 25.0,
+        "lost_time_min": 12.0,
+        "diff_min": 13.0,
+        "direction": "log_exceeds_loss"
+      }
+    },
+    {
+      "rule_id": "DQ-02",
+      "severity": "warning",
+      "entity": "PAINT",
+      "date": "2026-10-01",
+      "details": {
+        "logged_downtime_min": 40.0,
+        "lost_time_min": 30.0,
+        "diff_min": 10.0,
+        "direction": "log_exceeds_loss"
+      }
+    },
+    {
+      "rule_id": "DQ-02",
+      "severity": "warning",
+      "entity": "WELD",
+      "date": "2026-10-02",
+      "details": {
+        "logged_downtime_min": 30.0,
+        "lost_time_min": 48.0,
+        "diff_min": -18.0,
+        "direction": "unlogged_loss"
+      }
+    },
+    {
+      "rule_id": "DQ-02",
+      "severity": "warning",
+      "entity": "PAINT",
+      "date": "2026-10-02",
+      "details": {
+        "logged_downtime_min": 0.0,
+        "lost_time_min": 18.0,
+        "diff_min": -18.0,
+        "direction": "unlogged_loss"
+      }
+    },
+    {
+      "rule_id": "DQ-02",
+      "severity": "warning",
+      "entity": "ASSY",
+      "date": "2026-10-02",
+      "details": {
+        "logged_downtime_min": 55.0,
+        "lost_time_min": 6.0,
+        "diff_min": 49.0,
+        "direction": "log_exceeds_loss"
+      }
+    },
+    {
+      "rule_id": "DQ-03",
+      "severity": "info",
+      "entity": "downtime_log",
+      "date": null,
+      "details": {
+        "records_without_shift": 4
+      }
+    },
+    {
+      "rule_id": "DQ-04",
+      "severity": "info",
+      "entity": "WELD->PAINT",
+      "date": null,
+      "details": {
+        "upstream_produced": 229,
+        "downstream_produced": 231,
+        "buffer_change_units": -2
+      }
+    },
+    {
+      "rule_id": "DQ-04",
+      "severity": "warning",
+      "entity": "PAINT->ASSY",
+      "date": null,
+      "details": {
+        "upstream_produced": 231,
+        "downstream_produced": 240,
+        "buffer_change_units": -9
+      }
+    },
+    {
+      "rule_id": "DQ-05",
+      "severity": "warning",
+      "entity": "production_plan",
+      "date": null,
+      "details": {
+        "line_model_plan": 4800,
+        "plant_target": 5500,
+        "gap": -700
+      }
+    }
+  ],
+  "alerts": [
+    {
+      "rule_id": "AL-Q1",
+      "severity": "warning",
+      "entity": "PAINT",
+      "date": "2026-10-01",
+      "value": 0.0348
+    },
+    {
+      "rule_id": "AL-Q1",
+      "severity": "warning",
+      "entity": "WELD",
+      "date": "2026-10-02",
+      "value": 0.027
+    },
+    {
+      "rule_id": "AL-O2",
+      "severity": "info",
+      "entity": "WELD-1",
+      "date": "2026-10-02",
+      "value": 0.8738
+    },
+    {
+      "rule_id": "AL-Q1",
+      "severity": "critical",
+      "entity": "PAINT",
+      "date": "2026-10-02",
+      "value": 0.0517
+    },
+    {
+      "rule_id": "AL-D1",
+      "severity": "warning",
+      "entity": "CONV-03",
+      "date": "2026-10-02",
+      "value": 55.0
+    },
+    {
+      "rule_id": "AL-Q3",
+      "severity": "warning",
+      "entity": "PLANT",
+      "date": "2026-10-02",
+      "value": {
+        "WELD": 0.027,
+        "PAINT": 0.0517,
+        "ASSY": 0.0168
+      }
+    }
+  ]
+}

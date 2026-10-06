@@ -1,0 +1,146 @@
+# Виртуальный завод (services/sim). Параметры подобраны так, чтобы устойчивый темп линии,
+# доля брака и простои совпадали по порядку с данными кейса (см. calibration_targets).
+# Все времена — заводское время (Asia/Qostanay). Длительности — минуты, если не указано иное.
+version: 1
+
+clock:
+  demo_start: "2026-10-16T07:00:00+05:00"     # «сейчас» для демо (Demo Day, начало 1 смены)
+  speed: 60                                   # 1 реальная секунда = 60 с заводского времени
+  speed_presets: [1, 10, 60, 300]
+  backfill_from: "2026-09-01T00:00:00+05:00"  # история для дашбордов, SPC, калибровки
+  random_seed: 20261016
+
+process:
+  cycle_noise: { dist: lognormal, median_factor: 1.02, sigma: 0.02 }   # потеря скорости ~2%
+  product_mix: { ONIX: 0.521, COBALT: 0.375, J7: 0.104 }               # по плану 2500/1800/500
+  sequencing: heijunka                                                # равномерное чередование моделей
+  shift_b_defect_factor: 1.10
+  initial_buffers: { BIW: 12, PBS: 18, EOL: 4 }
+
+# Отказы: mtbf_h — средняя наработка между отказами по всем причинам при degradation=0; reasons — доли причин.
+# Для причин из wear_reasons интенсивность растёт с износом: lambda(d) = lambda0 * (1 + wear_hazard_gain * d^3);
+# остальные причины — случайные, постоянной интенсивности. mttr: lognormal(median, sigma).
+failures:
+  robot:
+    mtbf_h: 60
+    mttr: { median: 20, sigma: 0.5 }
+    reasons: { EL-SENSOR: 0.5, RB-TOOL: 0.3, RB-COLLISION: 0.2 }
+    wear_reasons: [RB-TOOL, EL-SENSOR]
+  fixture:
+    mtbf_h: 120
+    mttr: { median: 25, sigma: 0.4 }
+    reasons: { ME-JAM: 0.6, EL-SENSOR: 0.4 }
+    wear_reasons: [ME-JAM]
+  booth:
+    mtbf_h: 150
+    mttr: { median: 30, sigma: 0.4 }
+    reasons: { EL-DRIVE: 0.6, EL-PLC: 0.4 }
+  oven:
+    mtbf_h: 300
+    mttr: { median: 30, sigma: 0.4 }
+    reasons: { EL-DRIVE: 0.5, EL-SENSOR: 0.5 }
+  conveyor:
+    mtbf_h: 300
+    mttr: { median: 25, sigma: 0.4 }
+    reasons: { EL-DRIVE: 0.7, EL-PLC: 0.3 }
+    chain_break: { mtbf_h: 400, mttr: { median: 45, sigma: 0.35 }, reason: ME-CHAIN }   # зависит от износа цепи
+    wear_reasons: [ME-CHAIN]
+  test_stand:
+    mtbf_h: 200
+    mttr: { median: 15, sigma: 0.4 }
+    reasons: { EL-SENSOR: 0.7, EL-PLC: 0.3 }
+
+microstops:   # короче microstop_threshold_s → потеря производительности
+  conveyor: { mtbf_h: 8, duration: { median: 2, sigma: 0.5 }, reason: ME-JAM }
+  robot:    { mtbf_h: 8, duration: { median: 1.5, sigma: 0.5 }, reason: MT-CONSUMABLE }
+
+degradation:  # скрытое состояние износа d ∈ [0, 1]; прирост за час работы ~ Gamma(shape, mean/shape)
+  # reset_after_repair — износ после ремонта по причине из wear_reasons; pm_reduction — на сколько снижает износ плановое ТО (минимум 0.05)
+  wear_hazard_gain: 15
+  robot:    { mean_rate_per_h: 0.0025, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.30 }
+  fixture:  { mean_rate_per_h: 0.0012, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.30 }
+  conveyor: { mean_rate_per_h: 0.0017, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.00 }   # чистка не снимает вытяжку цепи
+
+paint_filters:  # перепад давления растёт линейно; на пределе камера встаёт на замену (MT-FILTER)
+  dp_start_pa: 150
+  dp_rate_pa_per_h: { mean: 7.0, sd: 1.0 }
+  dp_limit_pa: 450
+  replacement: { median: 40, sigma: 0.15, reason: MT-FILTER }
+  policy: on_limit          # on_limit | predictive_shift_change (what-if: замена в пересменку по прогнозу AL-M2)
+
+planned_maintenance:
+  - { equipment_type: robot,    every_working_days: 10, duration_min: 30, at: shift_start, shift: A, stagger: true, reason: PM-SCHEDULED }
+  - { equipment_type: conveyor, every_working_days: 5,  duration_min: 20, at: shift_start, shift: A, stagger: true, reason: PM-CLEANING }
+
+defects:
+  WELD:  { base: 0.018, robot_wear_gain: 0.020, types: { W-SPOT: 0.6, W-GEOM: 0.15, W-SPATTER: 0.25 } }
+  PAINT: { base: 0.025, dp_gain: 0.040, dp_from_pa: 300, humidity_out_of_spec_add: 0.015,
+           types: { P-DUST: 0.45, P-RUN: 0.15, P-ORANGE: 0.10, P-THIN: 0.15, P-COLOR: 0.15 } }
+  ASSY:  { base: 0.012, types: { A-TORQUE: 0.35, A-MISSING: 0.20, A-ELECTRIC: 0.30, A-SCRATCH: 0.15 } }
+  QC:    { base: 0.010, types: { Q-ALIGN: 0.5, Q-LEAK: 0.3, Q-BRAKE: 0.2 } }
+  scrap_share_of_defects: 0.002
+
+telemetry:  # d — износ, t — часы суток
+  sample_period_s: 60              # live
+  backfill_sample_period_s: 300    # backfill и ml-dataset (NFR-08); признаки PdM — на сетке 5 мин
+  robot:
+    motor_current_a: "12 + 7*d + N(0, 0.4)"
+    joint_temp_c: "42 + 25*d + 3*sin(2*pi*t/24) + N(0, 0.8)"
+    sensor_errors_h: "Poisson(0.2 + 4*d^2)"
+  fixture:
+    clamp_pressure_bar: "6.2 - 1.5*d + N(0, 0.1)"
+  booth:
+    filter_dp_pa: "dp_start + rate*hours_since_change + N(0, 4)"
+    humidity_pct: "55 + 10*sin(2*pi*t/24 + phase) + N(0, 1.5)"   # вне 45–65% брак окраски растёт
+    air_temp_c: "23 + 1.2*sin(2*pi*t/24) + N(0, 0.3)"
+    airflow_mps: "0.42 - 0.0004*(filter_dp_pa - 150) + N(0, 0.01)"
+  oven:
+    oven_temp_c: "140 + N(0, 1.2) (+ дрейф до 8 °C за 2 ч до отказа)"
+  conveyor:
+    motor_current_a: "18 + 9*d + N(0, 0.6)"
+    vibration_mm_s: "2.0 + 5.5*d^2 + N(0, 0.25)"
+    chain_elongation_pct: "0.4 + 2.8*d"
+
+ckd_supply:
+  initial_kits: { ONIX: 900, COBALT: 650, J7: 150 }
+  delivery_every_working_days: 3
+  lot_days_of_plan: 3
+  delay_days: { dist: triangular, min: 0, mode: 0.5, max: 2 }
+
+calibration_targets:          # проверяются тестом tests/sim/test_calibration.py на 20 рабочих днях
+  throughput_per_shift: { min: 112, max: 118 }       # кейс: 113–116 устойчиво
+  defect_rate: { WELD: [0.015, 0.030], PAINT: [0.030, 0.055], ASSY: [0.008, 0.020] }
+  unplanned_downtime_min_per_area_day: { min: 5, max: 70 }
+  expected_bottleneck: PAINT-1                       # замены фильтров + перекраска; периодически WELD-1
+
+ml_dataset:
+  months: 12
+  from: "2025-10-01T00:00:00+05:00"
+  random_seed: 7
+  window_min: 15
+  telemetry_period_s: 300
+  horizon_h: 8
+  split: { train_months: 9, val_months: 1, test_months: 2 }
+
+scenarios:
+  # inject: тип вмешательства; at_min — смещение от demo_start в заводских минутах (null — только вручную из демо-пульта)
+  - id: S1-CHAIN-BREAK
+    name_ru: "Обрыв цепи Конвейера-03"
+    inject: { type: failure, equipment: CONV-03, reason: ME-CHAIN, duration_min: 55 }
+    at_min: null
+  - id: S2-FILTER-TREND
+    name_ru: "Фильтры Камеры-02 близки к пределу"
+    inject: { type: set_state, equipment: BOOTH-02, filter_dp_pa: 370 }   # (450−370)/7 Па/ч ≈ 11.4 ч < lookahead 12 ч → AL-M2 сразу
+    at_min: 0
+  - id: S3-ABB04-WEAR
+    name_ru: "Износ робота ABB-04"
+    inject: { type: set_state, equipment: ABB-04, degradation: 0.75 }
+    at_min: 0
+  - id: S4-BAD-CKD-LOT
+    name_ru: "Партия комплектующих с дефектами"
+    inject: { type: defect_multiplier, areas: [WELD, PAINT, ASSY], factor: 1.6, duration_min: 240 }
+    at_min: null
+  - id: S5-KIT-SHORTAGE
+    name_ru: "Задержка поставки комплектов J7"
+    inject: { type: ckd, product: J7, set_kits: 40, delay_next_lot_days: 4 }
+    at_min: null

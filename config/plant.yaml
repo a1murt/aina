@@ -1,0 +1,158 @@
+# Qost Twin — модель завода по ISA-95 (IEC 62264).
+# Единственный источник правды для активов, тактов, буферов, смен и плана.
+# Коды — латиница UPPER-KEBAB. name_ru/name_kk — только для UI (kk — черновой перевод, проверить носителем).
+# aliases — как объект называется во внешних источниках (импорт docx/xlsx, MES, журналы).
+# Изменение такта/смены/порогов меняет golden-значения: см. data/case/expected/compute_expected.py.
+version: 1
+
+site:
+  code: KST
+  name_ru: "Автозавод, Костанай"
+  name_kk: "Автозауыт, Қостанай"
+  timezone: Asia/Qostanay          # UTC+5 с 01.03.2024 — требуется tzdata >= 2024a
+  currency: KZT
+
+calendar:
+  shifts:
+    - { code: A, name_ru: "1 смена", name_kk: "1-ауысым", start: "07:00", end: "15:00" }
+    - { code: B, name_ru: "2 смена", name_kk: "2-ауысым", start: "15:00", end: "23:00" }
+  working_weekdays: [1, 2, 3, 4, 5]          # ISO-8601: Пн=1 … Вс=7
+  holidays:
+    - { date: 2026-10-26, name_ru: "Перенесённый выходной (День Республики 25.10)" }
+    - { date: 2026-12-16, name_ru: "День Независимости" }
+  extra_working_days: []                     # субботние смены: [{date: 2026-10-17, shifts: [A]}]
+
+products:
+  - { code: ONIX,   name: "Chevrolet Onix",   aliases: ["Chevrolet Onix", "Onix"],     cycle_factor: 1.00, color_hex: "#5B8DEF" }
+  - { code: COBALT, name: "Chevrolet Cobalt", aliases: ["Chevrolet Cobalt", "Cobalt"], cycle_factor: 1.00, color_hex: "#9AA5B1" }
+  - { code: J7,     name: "JAC J7",           aliases: ["JAC J7", "J7"],               cycle_factor: 1.05, color_hex: "#E0A84F" }
+
+plan:
+  - { month: "2026-10", level: plant_target, qty: 5500 }
+  - { month: "2026-10", level: line_model, line: ASSY-1, product: ONIX,   qty: 2500 }
+  - { month: "2026-10", level: line_model, line: ASSY-1, product: COBALT, qty: 1800 }
+  - { month: "2026-10", level: line_model, line: ASSY-1, product: J7,     qty: 500 }
+
+equipment_types:
+  robot:
+    name_ru: "Сварочный робот"
+    signals:
+      - { code: motor_current_a,  name_ru: "Ток двигателя оси",   unit: "A",    lo: 0,  hi: 40,  warn_hi: 20 }
+      - { code: joint_temp_c,     name_ru: "Температура оси",     unit: "°C",   lo: 0,  hi: 120, warn_hi: 70 }
+      - { code: sensor_errors_h,  name_ru: "Ошибки датчиков",     unit: "1/ч",  lo: 0,  hi: 20,  warn_hi: 2 }
+  fixture:
+    name_ru: "Сварочный кондуктор"
+    signals:
+      - { code: clamp_pressure_bar, name_ru: "Давление зажимов",  unit: "бар",  lo: 0,  hi: 8,   warn_lo: 5.0 }
+  booth:
+    name_ru: "Окрасочная камера"
+    signals:
+      - { code: filter_dp_pa,     name_ru: "Перепад давления на фильтрах", unit: "Па", lo: 0, hi: 600, warn_hi: 380, limit_hi: 450 }
+      - { code: humidity_pct,     name_ru: "Влажность",           unit: "%",    lo: 0,  hi: 100, warn_lo: 45, warn_hi: 65 }
+      - { code: air_temp_c,       name_ru: "Температура воздуха", unit: "°C",   lo: 10, hi: 35,  warn_lo: 20, warn_hi: 26 }
+      - { code: airflow_mps,      name_ru: "Скорость воздуха",    unit: "м/с",  lo: 0,  hi: 1,   warn_lo: 0.25 }
+  oven:
+    name_ru: "Сушильная печь"
+    signals:
+      - { code: oven_temp_c,      name_ru: "Температура печи",    unit: "°C",   lo: 0,  hi: 200, warn_lo: 135, warn_hi: 145 }
+  conveyor:
+    name_ru: "Конвейер"
+    signals:
+      - { code: motor_current_a,      name_ru: "Ток привода",          unit: "A",    lo: 0, hi: 60, warn_hi: 28 }
+      - { code: vibration_mm_s,       name_ru: "Вибрация (СКЗ)",       unit: "мм/с", lo: 0, hi: 15, warn_hi: 4.5, limit_hi: 7.1 }
+      - { code: chain_elongation_pct, name_ru: "Вытяжка цепи",         unit: "%",    lo: 0, hi: 5,  warn_hi: 2.0, limit_hi: 3.0 }
+  test_stand:
+    name_ru: "Испытательный стенд"
+    signals: []
+
+# Порядок областей = порядок материального потока.
+areas:
+  - code: CKD
+    kind: storage
+    name_ru: "Склад комплектующих"
+    name_kk: "Құрамдас бөліктер қоймасы"
+    layout: { x: 20, y: 200, w: 120, h: 160 }
+  - code: WELD
+    kind: production
+    name_ru: "Сварка"
+    name_kk: "Дәнекерлеу"
+    aliases: ["Сварка"]
+    layout: { x: 170, y: 120, w: 280, h: 320 }
+    lines:
+      - code: WELD-1
+        name_ru: "Сварка-1"
+        aliases: ["Сварка-1"]
+        ict_seconds: 233            # лучший показанный цикл (BDR) по данным кейса, округлён вниз до секунды
+        plan_rate_per_shift: 120
+        rework: { stations: 1, minutes_median: 15 }
+        equipment:
+          - { code: ABB-01, name_ru: "Робот ABB-01", type: robot,   criticality: B, degraded_capacity: 0.5, aliases: ["ABB-01"], layout: { x: 215, y: 175 } }
+          - { code: ABB-02, name_ru: "Робот ABB-02", type: robot,   criticality: B, degraded_capacity: 0.5, aliases: ["ABB-02"], layout: { x: 315, y: 175 } }
+          - { code: ABB-03, name_ru: "Робот ABB-03", type: robot,   criticality: B, degraded_capacity: 0.5, aliases: ["ABB-03"], layout: { x: 215, y: 345 } }
+          - { code: ABB-04, name_ru: "Робот ABB-04", type: robot,   criticality: B, degraded_capacity: 0.5, aliases: ["ABB-04"], layout: { x: 315, y: 345 } }
+          - { code: JIG-01, name_ru: "Кондуктор кузова", type: fixture, criticality: A, degraded_capacity: 0.0, aliases: ["Кондуктор-01"], layout: { x: 405, y: 260 } }
+  - code: PAINT
+    kind: production
+    name_ru: "Окраска"
+    name_kk: "Бояу"
+    aliases: ["Окраска"]
+    layout: { x: 550, y: 120, w: 280, h: 320 }
+    lines:
+      - code: PAINT-1
+        name_ru: "Окраска-1"
+        aliases: ["Окраска-1"]
+        ict_seconds: 233
+        plan_rate_per_shift: 120
+        rework: { stations: 1, minutes_median: 20, repaint_share: 0.4 }   # 40% дефектов окраски — полная перекраска (повторный проход через камеры)
+        equipment:
+          - { code: BOOTH-01, name_ru: "Камера грунта",     type: booth, criticality: A, degraded_capacity: 0.0, aliases: ["Камера-01"], layout: { x: 600, y: 185 } }
+          - { code: BOOTH-02, name_ru: "Камера базы и лака", type: booth, criticality: A, degraded_capacity: 0.0, aliases: ["Камера-02"], layout: { x: 720, y: 185 } }
+          - { code: OVEN-01,  name_ru: "Сушильная печь",    type: oven,  criticality: A, degraded_capacity: 0.0, aliases: ["Печь-01"],   layout: { x: 660, y: 350 } }
+  - code: ASSY
+    kind: production
+    name_ru: "Сборка"
+    name_kk: "Құрастыру"
+    aliases: ["Сборка"]
+    layout: { x: 930, y: 120, w: 300, h: 320 }
+    lines:
+      - code: ASSY-1
+        name_ru: "Сборка-1"
+        aliases: ["Сборка-1"]
+        ict_seconds: 233
+        plan_rate_per_shift: 120
+        rework: { stations: 1, minutes_median: 10 }
+        equipment:
+          - { code: CONV-01, name_ru: "Конвейер-01 (обивка)",       type: conveyor, criticality: A, degraded_capacity: 0.0, aliases: ["Конвейер-01"], layout: { x: 975, y: 185 } }
+          - { code: CONV-02, name_ru: "Конвейер-02 (шасси)",        type: conveyor, criticality: A, degraded_capacity: 0.0, aliases: ["Конвейер-02"], layout: { x: 1075, y: 260 } }
+          - { code: CONV-03, name_ru: "Конвейер-03 (финальная)",    type: conveyor, criticality: A, degraded_capacity: 0.0, aliases: ["Конвейер-03"], layout: { x: 1175, y: 345 } }
+  - code: QC
+    kind: production
+    name_ru: "Контроль качества"
+    name_kk: "Сапа бақылауы"
+    aliases: ["ОТК", "Контроль качества"]
+    layout: { x: 1310, y: 160, w: 150, h: 240 }
+    lines:
+      - code: QC-1
+        name_ru: "Линия контроля"
+        aliases: ["ОТК-1"]
+        ict_seconds: 200
+        plan_rate_per_shift: 120
+        rework: { stations: 1, minutes_median: 12 }
+        equipment:
+          - { code: TEST-01,  name_ru: "Стенд развал-схождение", type: test_stand, criticality: A, degraded_capacity: 0.0, layout: { x: 1345, y: 215 } }
+          - { code: TEST-02,  name_ru: "Тормозной стенд",        type: test_stand, criticality: A, degraded_capacity: 0.0, layout: { x: 1415, y: 285 } }
+          - { code: WATER-01, name_ru: "Камера дождевания",      type: test_stand, criticality: C, degraded_capacity: 1.0, layout: { x: 1345, y: 355 } }
+  - code: FG
+    kind: storage
+    name_ru: "Склад готовой продукции"
+    name_kk: "Дайын өнім қоймасы"
+    layout: { x: 1480, y: 200, w: 100, h: 160 }
+
+buffers:
+  - { code: BIW, name_ru: "Буфер кузовов (сварка → окраска)",            from_line: WELD-1,  to_line: PAINT-1, capacity: 20, layout: { x: 470, y: 230, w: 60, h: 100 } }
+  - { code: PBS, name_ru: "Склад окрашенных кузовов (окраска → сборка)", from_line: PAINT-1, to_line: ASSY-1,  capacity: 30, layout: { x: 850, y: 230, w: 60, h: 100 } }
+  - { code: EOL, name_ru: "Буфер после сборки (сборка → ОТК)",           from_line: ASSY-1,  to_line: QC-1,    capacity: 10, layout: { x: 1250, y: 250, w: 40, h: 60 } }
+
+layout:
+  viewbox: [0, 0, 1600, 560]
+  flow_path: [[140, 280], [450, 280], [550, 280], [830, 280], [930, 280], [1230, 280], [1310, 280], [1460, 280], [1480, 280]]

@@ -1,0 +1,113 @@
+# Пороги, правила оповещений, сверка данных, эскалации.
+# Значения по умолчанию взяты из «Дополнительных вводных» кейса; меняются в UI админа (таблица settings
+# перекрывает YAML, все изменения — в audit_log). Все таймеры — в заводском (симуляционном) времени.
+version: 1
+
+thresholds:
+  oee_target: 0.85                          # кейс: OEE не менее 85%
+  oee_near_margin_pp: 3.0                   # «близко к порогу»: target <= OEE < target + 3 п.п.
+  defect_rate_limit: 0.02                   # кейс: брак не более 2%
+  defect_rate_critical: 0.04                # 2× нормы
+  critical_downtime_limit_min_per_day: 60   # кейс: внеплановый простой оборудования класса A, мин/сутки на единицу
+  critical_downtime_warn_ratio: 0.75        # предупреждение с 45 мин
+  plant_target_per_month: 5500              # кейс: не менее 5 500 авто/мес
+  microstop_threshold_s: 300                # остановка короче 5 мин = микроостановка (потеря производительности, не доступности)
+  buffer_low_ratio: 0.20                    # риск голодания следующего участка
+  buffer_high_ratio: 0.90                   # риск блокировки предыдущего участка
+  plan_risk_warn_p: 0.50                    # P(выполнить план месяца) ниже — предупреждение директору
+  plan_risk_crit_p: 0.20
+  pdm_horizon_h: 8                          # горизонт прогноза отказа
+  pdm_warn_p: 0.50
+  pdm_crit_p: 0.80
+  telemetry_limit_lookahead_h: 12           # прогноз выхода сигнала за limit_hi (например, ΔP фильтров)
+
+data_quality:
+  load_mismatch_pp: 0.5        # DQ-01: |загрузка из отчёта − рассчитанная доступность| > 0.5 п.п.
+  downtime_recon_min: 10       # DQ-02: |минуты в журнале − потерянное время смены| >= 10 мин
+  flow_balance_warn_units: 5   # DQ-04: отток буфера >= 5 ед. за период — warning, иначе info
+
+roles: [director, master, operator, maintenance, quality, admin]
+
+# severity: info | warning | critical. recipients — роли. channels: ui | telegram.
+alert_rules:
+  - id: AL-S1
+    name_ru: "Внеплановая остановка оборудования"
+    when: "state == DOWN_UNPLANNED and duration >= 5 min (класс A — сразу)"
+    severity: { A: critical, B: warning, C: info }
+    recipients: [master, maintenance]
+    channels: [ui, telegram]
+  - id: AL-D1
+    name_ru: "Лимит простоя критического оборудования"
+    when: "класс A, сумма внеплановых простоев за сутки >= 0.75×лимит (warning) / >= лимит (critical)"
+    recipients: [master, maintenance, director]
+    channels: [ui, telegram]
+  - id: AL-O1
+    name_ru: "OEE ниже цели"
+    when: "OEE линии за смену < oee_target (по закрытой смене и по прогнозу текущей)"
+    severity: warning
+    recipients: [master, director]
+    channels: [ui]
+  - id: AL-O2
+    name_ru: "OEE близко к порогу"
+    when: "oee_target <= OEE < oee_target + oee_near_margin_pp"
+    severity: info
+    recipients: [master]
+    channels: [ui]
+  - id: AL-Q1
+    name_ru: "Брак выше нормы"
+    when: "доля брака участка за смену > defect_rate_limit (warning) / > defect_rate_critical (critical)"
+    recipients: [quality, master]
+    channels: [ui, telegram]
+  - id: AL-Q2
+    name_ru: "SPC: процесс вне статистического контроля"
+    when: "p-карта участка: правила Western Electric 1–4"
+    severity: warning
+    recipients: [quality]
+    channels: [ui]
+  - id: AL-Q3
+    name_ru: "Системный рост брака"
+    when: "в смене брак вырос относительно предыдущей смены на всех участках потока (>= 3) и хотя бы один участок выше нормы"
+    severity: warning
+    recipients: [quality, director]
+    channels: [ui, telegram]
+  - id: AL-B1
+    name_ru: "Буфер: риск голодания/блокировки"
+    when: "уровень < buffer_low_ratio×ёмкость (warning), = 0 (critical); > buffer_high_ratio×ёмкость (warning)"
+    recipients: [master]
+    channels: [ui]
+  - id: AL-P1
+    name_ru: "Риск невыполнения плана месяца"
+    when: "P(выпуск месяца >= plant_target) < plan_risk_warn_p (warning) / < plan_risk_crit_p (critical)"
+    recipients: [director]
+    channels: [ui, telegram]
+  - id: AL-M1
+    name_ru: "Прогноз отказа оборудования"
+    when: "p_failure(horizon) >= pdm_warn_p (warning) / >= pdm_crit_p (critical)"
+    recipients: [maintenance]
+    channels: [ui, telegram]
+  - id: AL-M2
+    name_ru: "Сигнал достигнет предела"
+    when: "линейный прогноз сигнала пересечёт limit_hi в пределах telemetry_limit_lookahead_h; рекомендация — обслужить в ближайшую пересменку"
+    severity: warning
+    recipients: [maintenance, master]
+    channels: [ui, telegram]
+  - id: AL-L1
+    name_ru: "Покрытие комплектами CKD ниже 2 дней"
+    when: "запас комплектов модели / суточный план модели < 2"
+    severity: warning
+    recipients: [director, master]
+    channels: [ui]
+
+escalation:
+  # если оповещение не подтверждено (ack) за timeout — уведомляется следующий уровень
+  warning:  { timeout_min: 30, chain: [master, director] }
+  critical: { timeout_min: 10, chain: [master, maintenance, director] }
+
+data_quality_rules:
+  - { id: DQ-01, name_ru: "Загрузка в отчёте не совпадает с часами работы" }
+  - { id: DQ-02, name_ru: "Журнал простоев не сходится с потерянным временем смены" }
+  - { id: DQ-03, name_ru: "Запись простоя без смены/времени" }
+  - { id: DQ-04, name_ru: "Баланс потока: следующий участок выпустил больше, чем получил" }
+  - { id: DQ-05, name_ru: "План по моделям не равен цели завода" }
+  - { id: DQ-06, name_ru: "Производительность > 100% — такт задан неверно" }
+  - { id: DQ-07, name_ru: "Неизвестная причина/оборудование/участок при импорте" }
