@@ -1,0 +1,42 @@
+# secrets / local env
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+
+# Node / Next.js
+node_modules/
+web/.next/
+web/out/
+web/*.tsbuildinfo
+web/next-env.d.ts
+web/playwright-report/
+web/test-results/
+.pnpm-store/
+
+# runtime data
+spool/
+*.spool
+ml/models/*
+!ml/models/.gitkeep
+ml/data/
+*.parquet
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

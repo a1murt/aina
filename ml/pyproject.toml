@@ -1,0 +1,18 @@
+[project]
+name = "qost-ml"
+version = "0.1.0"
+description = "Qost Twin ML: PdM dataset, training, evaluation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "twin-core",
+]
+
+[project.scripts]
+qost-ml = "qost_ml.__main__:main"
+
+[tool.uv.sources]
+twin-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"

@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens (SPEC §13.1). ISA-101 High Performance HMI: the normal state is neutral grey,
+ * colour is reserved for deviations — red: critical / alarm, amber: warning / degraded,
+ * blue: information / starved-blocked, purple: planned maintenance. A state is never shown by
+ * colour alone: every use pairs the token with an icon and a text label.
+ */
+:root {
+  --radius: 0.5rem;
+
+  /* neutral UI (shadcn/ui variables) */
+  --background: oklch(0.975 0 0);
+  --foreground: oklch(0.2 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0 0);
+  --primary: oklch(0.3 0.01 250);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.93 0 0);
+  --secondary-foreground: oklch(0.25 0 0);
+  --muted: oklch(0.94 0 0);
+  --muted-foreground: oklch(0.45 0 0);
+  --accent: oklch(0.93 0 0);
+  --accent-foreground: oklch(0.25 0 0);
+  --destructive: oklch(0.55 0.22 27);
+  --border: oklch(0.88 0 0);
+  --input: oklch(0.88 0 0);
+  --ring: oklch(0.6 0.01 250);
+
+  /* ISA-101 palette */
+  --isa-normal: oklch(0.55 0.01 250);
+  --isa-idle: oklch(0.72 0 0);
+  --isa-alarm: oklch(0.55 0.22 27);
+  --isa-warning: oklch(0.72 0.16 70);
+  --isa-info: oklch(0.55 0.15 250);
+  --isa-planned: oklch(0.52 0.18 300);
+
+  /* equipment / line states (SPEC §5.3) */
+  --state-running: var(--isa-normal);
+  --state-degraded: var(--isa-warning);
+  --state-starved: var(--isa-info);
+  --state-blocked: var(--isa-info);
+  --state-down-unplanned: var(--isa-alarm);
+  --state-down-planned: var(--isa-planned);
+  --state-changeover: var(--isa-planned);
+  --state-idle-no-plan: var(--isa-idle);
+
+  /* alert severities (SPEC §9.7) */
+  --severity-critical: var(--isa-alarm);
+  --severity-warning: var(--isa-warning);
+  --severity-info: var(--isa-info);
+}
+
+/* Dark theme: default for /live and /operator (control room). */
+.dark {
+  --background: oklch(0.17 0 0);
+  --foreground: oklch(0.93 0 0);
+  --card: oklch(0.21 0 0);
+  --card-foreground: oklch(0.93 0 0);
+  --popover: oklch(0.21 0 0);
+  --popover-foreground: oklch(0.93 0 0);
+  --primary: oklch(0.88 0.01 250);
+  --primary-foreground: oklch(0.2 0 0);
+  --secondary: oklch(0.27 0 0);
+  --secondary-foreground: oklch(0.93 0 0);
+  --muted: oklch(0.27 0 0);
+  --muted-foreground: oklch(0.7 0 0);
+  --accent: oklch(0.27 0 0);
+  --accent-foreground: oklch(0.93 0 0);
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(0.32 0 0);
+  --input: oklch(0.32 0 0);
+  --ring: oklch(0.55 0.01 250);
+
+  --isa-normal: oklch(0.68 0.01 250);
+  --isa-idle: oklch(0.45 0 0);
+  --isa-alarm: oklch(0.65 0.21 27);
+  --isa-warning: oklch(0.8 0.15 75);
+  --isa-info: oklch(0.68 0.13 250);
+  --isa-planned: oklch(0.66 0.16 300);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-isa-normal: var(--isa-normal);
+  --color-isa-idle: var(--isa-idle);
+  --color-isa-alarm: var(--isa-alarm);
+  --color-isa-warning: var(--isa-warning);
+  --color-isa-info: var(--isa-info);
+  --color-isa-planned: var(--isa-planned);
+
+  --color-state-running: var(--state-running);
+  --color-state-degraded: var(--state-degraded);
+  --color-state-starved: var(--state-starved);
+  --color-state-blocked: var(--state-blocked);
+  --color-state-down-unplanned: var(--state-down-unplanned);
+  --color-state-down-planned: var(--state-down-planned);
+  --color-state-changeover: var(--state-changeover);
+  --color-state-idle-no-plan: var(--state-idle-no-plan);
+
+  --color-severity-critical: var(--severity-critical);
+  --color-severity-warning: var(--severity-warning);
+  --color-severity-info: var(--severity-info);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
