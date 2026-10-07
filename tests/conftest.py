@@ -33,7 +33,7 @@ def cfg() -> TwinConfig:
 
 @pytest.fixture
 def config_copy(tmp_path: Path) -> Path:
-    """A writable copy of config/ for mutation tests."""
+    """A writable copy of config/ for mutation tests (without the generated demo tag map)."""
     target = tmp_path / "config"
-    shutil.copytree(CONFIG_DIR, target)
+    shutil.copytree(CONFIG_DIR, target, ignore=shutil.ignore_patterns("tag_map.demo.yaml"))
     return target

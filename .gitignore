@@ -29,6 +29,7 @@ web/test-results/
 .pnpm-store/
 
 # runtime data
+var/
 spool/
 *.spool
 ml/models/*

@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "Qost Twin virtual plant (SimPy, OPC UA, MQTT)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "aiomqtt>=2.3",
+    "asyncua>=1.1.5",
+    "fastapi>=0.115",
+    "polars>=1.10",
+    "simpy>=4.1",
     "twin-core",
+    "uvicorn>=0.32",
 ]
 
 [project.scripts]
