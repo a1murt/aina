@@ -1,0 +1,220 @@
+{
+  "type": "robot",
+  "version": "v001-20261001-dd591e70",
+  "data_id": "20261001-dd591e70",
+  "model": "lightgbm binary",
+  "lightgbm_version": "4.7.0",
+  "target": {
+    "text_ru": "внеплановый отказ ≥ 5 мин по износовой причине в ближайшие 8 ч",
+    "horizon_h": 8.0,
+    "wear_reasons": [
+      "EL-SENSOR",
+      "RB-TOOL"
+    ],
+    "min_duration_s": 300.0
+  },
+  "trained_on": {
+    "dataset_from": "2025-09-30T19:00:00.000000Z",
+    "dataset_to": "2026-09-30T19:00:00.000000Z",
+    "seed": 7,
+    "config_hash": "8800047947a5c015",
+    "telemetry_period_s": 300.0,
+    "training_data_until": "2026-07-31T19:00:00Z"
+  },
+  "dataset_hash": "dd591e70423ebea2c2c7a27a943b565ea96c4e72c15e2c997ff217310a563b79",
+  "split": {
+    "train": [
+      "2025-09-30T19:00:00Z",
+      "2026-06-30T19:00:00Z"
+    ],
+    "val": [
+      "2026-06-30T19:00:00Z",
+      "2026-07-31T19:00:00Z"
+    ],
+    "test": [
+      "2026-07-31T19:00:00Z",
+      "2026-09-30T19:00:00Z"
+    ],
+    "embargo_h": 8.0,
+    "rule": "row in split iff [T, T + horizon) lies inside it"
+  },
+  "features": [
+    "motor_current_a_mean_1h",
+    "motor_current_a_std_1h",
+    "motor_current_a_slope_1h",
+    "motor_current_a_max_1h",
+    "motor_current_a_mean_4h",
+    "motor_current_a_std_4h",
+    "motor_current_a_slope_4h",
+    "motor_current_a_max_4h",
+    "motor_current_a_mean_24h",
+    "motor_current_a_std_24h",
+    "motor_current_a_slope_24h",
+    "motor_current_a_max_24h",
+    "joint_temp_c_mean_1h",
+    "joint_temp_c_std_1h",
+    "joint_temp_c_slope_1h",
+    "joint_temp_c_max_1h",
+    "joint_temp_c_mean_4h",
+    "joint_temp_c_std_4h",
+    "joint_temp_c_slope_4h",
+    "joint_temp_c_max_4h",
+    "joint_temp_c_mean_24h",
+    "joint_temp_c_std_24h",
+    "joint_temp_c_slope_24h",
+    "joint_temp_c_max_24h",
+    "sensor_errors_h_mean_1h",
+    "sensor_errors_h_std_1h",
+    "sensor_errors_h_slope_1h",
+    "sensor_errors_h_max_1h",
+    "sensor_errors_h_mean_4h",
+    "sensor_errors_h_std_4h",
+    "sensor_errors_h_slope_4h",
+    "sensor_errors_h_max_4h",
+    "sensor_errors_h_mean_24h",
+    "sensor_errors_h_std_24h",
+    "sensor_errors_h_slope_24h",
+    "sensor_errors_h_max_24h",
+    "sensor_errors_h_count_4h",
+    "microstops_24h",
+    "hours_since_pm",
+    "hours_since_repair",
+    "hours_since_wear_repair",
+    "cycles_since_pm",
+    "shift",
+    "work_hours_ahead"
+  ],
+  "categorical_features": [
+    "shift"
+  ],
+  "not_features": [
+    "Degradation (hidden simulator state, FR-SIM-02)",
+    "type (one model per type)"
+  ],
+  "params": {
+    "objective": "binary",
+    "metric": "average_precision",
+    "learning_rate": 0.03,
+    "num_leaves": 15,
+    "min_data_in_leaf": 200,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 1,
+    "lambda_l2": 1.0,
+    "max_bin": 255,
+    "seed": 7,
+    "deterministic": true,
+    "force_col_wise": true,
+    "verbosity": -1,
+    "scale_pos_weight": 18.796257399274392
+  },
+  "best_iteration": 199,
+  "scale_pos_weight": 18.7963,
+  "calibration": "isotonic on the validation month",
+  "metrics": {
+    "train": {
+      "rows": 103673,
+      "positive_rows": 5237,
+      "base_rate": 0.0505,
+      "pr_auc": 0.8318,
+      "roc_auc": 0.9873,
+      "brier": 0.0205,
+      "precision_at_warn": 0.9361,
+      "recall_at_warn": 0.5513,
+      "failures": 169,
+      "failures_detected": 166,
+      "lead_time_median_h": 4.1345,
+      "lead_time_p25_h": 3.0048
+    },
+    "val": {
+      "rows": 11718,
+      "positive_rows": 564,
+      "base_rate": 0.0481,
+      "pr_auc": 0.5035,
+      "roc_auc": 0.892,
+      "brier": 0.03,
+      "precision_at_warn": 0.8408,
+      "recall_at_warn": 0.3652,
+      "failures": 19,
+      "failures_detected": 17,
+      "lead_time_median_h": 2.4762,
+      "lead_time_p25_h": 1.7311
+    },
+    "test": {
+      "rows": 23179,
+      "positive_rows": 1018,
+      "base_rate": 0.0439,
+      "pr_auc": 0.6601,
+      "roc_auc": 0.932,
+      "brier": 0.0219,
+      "precision_at_warn": 0.8231,
+      "recall_at_warn": 0.5255,
+      "failures": 33,
+      "failures_detected": 31,
+      "lead_time_median_h": 3.2913,
+      "lead_time_p25_h": 2.5611
+    },
+    "test_uncalibrated": {
+      "pr_auc": 0.6846,
+      "roc_auc": 0.9336
+    }
+  },
+  "thresholds": {
+    "acceptance": {
+      "pr_auc": 0.4,
+      "roc_auc": 0.75
+    },
+    "passed": {
+      "pr_auc": true,
+      "roc_auc": true
+    },
+    "alert": {
+      "pdm_warn_p": 0.5,
+      "pdm_crit_p": 0.8
+    }
+  },
+  "feature_importance_gain_top10": [
+    [
+      "work_hours_ahead",
+      763375.2
+    ],
+    [
+      "sensor_errors_h_mean_1h",
+      449291.8
+    ],
+    [
+      "sensor_errors_h_mean_4h",
+      119519.1
+    ],
+    [
+      "hours_since_repair",
+      102629.6
+    ],
+    [
+      "sensor_errors_h_std_4h",
+      88468.0
+    ],
+    [
+      "joint_temp_c_slope_24h",
+      77045.9
+    ],
+    [
+      "sensor_errors_h_count_4h",
+      70446.0
+    ],
+    [
+      "hours_since_pm",
+      62711.2
+    ],
+    [
+      "shift",
+      61770.1
+    ],
+    [
+      "joint_temp_c_slope_4h",
+      57619.8
+    ]
+  ],
+  "note_ru": "Метрики получены на синтетике (виртуальный завод). Модель предсказывает только отказы по износовым причинам; случайные отказы не предсказываются. Перед пилотом — дообучение на данных завода.",
+  "note_en": "Metrics on synthetic data (virtual plant). The model predicts wear-reason failures only; random failures are not predicted. Retrain on plant data before the pilot."
+}

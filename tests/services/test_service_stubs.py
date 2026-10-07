@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from qost_api.app import create_app
-from qost_ml.__main__ import main as ml_main
 from twin_core.config import TwinConfig
 from twin_core.health import start_health_server
 
@@ -74,8 +73,3 @@ def test_stub_entry_points(module: str, port: int) -> None:
     entry = importlib.import_module(f"{module}.__main__")
     assert port == entry.DEFAULT_PORT
     assert callable(entry.main)
-
-
-def test_ml_cli_is_a_placeholder(capsys: pytest.CaptureFixture[str]) -> None:
-    assert ml_main(["dataset"]) == 0
-    assert "not implemented until M7" in capsys.readouterr().out

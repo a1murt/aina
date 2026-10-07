@@ -32,8 +32,11 @@ web/test-results/
 var/
 spool/
 *.spool
+# trained PdM models are committed (≈1.3 MB of text, needed offline by make demo)
 ml/models/*
 !ml/models/.gitkeep
+!ml/models/robot/
+!ml/models/conveyor/
 ml/data/
 *.parquet
 

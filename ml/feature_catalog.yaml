@@ -1,0 +1,104 @@
+# Каталог признаков PdM (SPEC §11.1): как объяснять SHAP-факторы словами.
+# Текст признака ищется так: features.<имя> (точная формулировка) → шаблон stats.<статистика>
+# с подстановкой signals.<сигнал> и windows.<окно>. Плейсхолдеры: {value} — значение признака,
+# {signal}, {unit}, {window}, {shift} — название смены, {horizon} — горизонт прогноза, ч.
+# Варианты: <lang>_neg — для отрицательного значения, <lang>_flat — для нуля (после округления),
+# <lang>_missing — нет данных. kk — черновой перевод, проверить носителем.
+version: 1
+meta:
+  translation_status: { ru: final, kk: draft }
+
+windows:
+  1: { ru: "1 ч", kk: "1 сағ" }
+  4: { ru: "4 ч", kk: "4 сағ" }
+  24: { ru: "24 ч", kk: "24 сағ" }
+
+# Названия сигналов в тексте: ru — именительный падеж, ru_gen — родительный («рост вибрации»), единицы.
+signals:
+  motor_current_a:      { ru: "ток двигателя",                ru_gen: "тока двигателя",                kk: "қозғалтқыш тогы",             unit_ru: "А",    unit_kk: "А" }
+  joint_temp_c:         { ru: "температура оси",              ru_gen: "температуры оси",               kk: "ось температурасы",           unit_ru: "°C",   unit_kk: "°C" }
+  sensor_errors_h:      { ru: "ошибки датчиков",              ru_gen: "ошибок датчиков",               kk: "датчик қателері",             unit_ru: "1/ч",  unit_kk: "1/сағ" }
+  clamp_pressure_bar:   { ru: "давление зажимов",             ru_gen: "давления зажимов",              kk: "қысқыштар қысымы",            unit_ru: "бар",  unit_kk: "бар" }
+  filter_dp_pa:         { ru: "перепад давления на фильтрах", ru_gen: "перепада давления на фильтрах", kk: "сүзгілердегі қысым айырмасы", unit_ru: "Па",   unit_kk: "Па" }
+  humidity_pct:         { ru: "влажность",                    ru_gen: "влажности",                     kk: "ылғалдылық",                  unit_ru: "%",    unit_kk: "%" }
+  air_temp_c:           { ru: "температура воздуха",          ru_gen: "температуры воздуха",           kk: "ауа температурасы",           unit_ru: "°C",   unit_kk: "°C" }
+  airflow_mps:          { ru: "скорость воздуха",             ru_gen: "скорости воздуха",              kk: "ауа жылдамдығы",              unit_ru: "м/с",  unit_kk: "м/с" }
+  oven_temp_c:          { ru: "температура печи",             ru_gen: "температуры печи",              kk: "пеш температурасы",           unit_ru: "°C",   unit_kk: "°C" }
+  vibration_mm_s:       { ru: "вибрация",                     ru_gen: "вибрации",                      kk: "діріл",                       unit_ru: "мм/с", unit_kk: "мм/с" }
+  chain_elongation_pct: { ru: "вытяжка цепи",                 ru_gen: "вытяжки цепи",                  kk: "шынжырдың созылуы",           unit_ru: "%",    unit_kk: "%" }
+
+# Шаблоны по статистикам окна: <сигнал>_<stat>_<окно>h. {signal_gen} — родительный падеж (ru).
+stats:
+  mean:
+    ru: "{signal}: в среднем {value:.2f} {unit} за {window}"
+    kk: "{signal}: {window} ішінде орташа {value:.2f} {unit}"
+    ru_missing: "{signal}: нет данных за {window}"
+    kk_missing: "{signal}: {window} ішінде дерек жоқ"
+  std:
+    ru: "колебания {signal_gen}: ±{value:.2f} {unit} за {window}"
+    kk: "{signal} тұрақсыз: {window} ішінде ауытқу ±{value:.2f} {unit}"
+    ru_missing: "{signal}: нет данных за {window}"
+    kk_missing: "{signal}: {window} ішінде дерек жоқ"
+  max:
+    ru: "{signal}: максимум {value:.2f} {unit} за {window}"
+    kk: "{signal}: {window} ішіндегі ең жоғары мәні {value:.2f} {unit}"
+    ru_missing: "{signal}: нет данных за {window}"
+    kk_missing: "{signal}: {window} ішінде дерек жоқ"
+  slope:   # значение — изменение за окно (наклон Тейла — Сена × длина окна)
+    ru: "рост {signal_gen}: +{value:.2f} {unit} за {window}"
+    kk: "{signal} артып келеді: {window} ішінде +{value:.2f} {unit}"
+    ru_neg: "снижение {signal_gen}: {value:.2f} {unit} за {window}"
+    kk_neg: "{signal} төмендеп келеді: {window} ішінде {value:.2f} {unit}"
+    ru_flat: "{signal}: без изменений за {window}"
+    kk_flat: "{signal} {window} ішінде өзгермеген"
+    ru_missing: "{signal}: нет данных за {window}"
+    kk_missing: "{signal}: {window} ішінде дерек жоқ"
+  count:
+    ru: "{signal} за {window}: {value:.0f}"
+    kk: "{window} ішіндегі {signal}: {value:.0f}"
+    ru_missing: "{signal}: нет данных за {window}"
+    kk_missing: "{signal}: {window} ішінде дерек жоқ"
+
+# Точные формулировки (важнее шаблонов).
+features:
+  vibration_mm_s_slope_4h:
+    ru: "вибрация растёт: +{value:.2f} мм/с за 4 ч"
+    kk: "діріл артып келеді: 4 сағатта +{value:.2f} мм/с"
+    ru_neg: "вибрация снижается: {value:.2f} мм/с за 4 ч"
+    kk_neg: "діріл төмендеп келеді: 4 сағатта {value:.2f} мм/с"
+    ru_flat: "вибрация без изменений за 4 ч"
+    kk_flat: "діріл 4 сағатта өзгермеген"
+  microstops_24h:
+    ru: "микроостановок за 24 ч: {value:.0f}"
+    kk: "24 сағаттағы микротоқтаулар: {value:.0f}"
+  hours_since_pm:
+    ru: "с последнего планового ТО прошло {value:.0f} ч"
+    kk: "соңғы жоспарлы ТҚ-дан бері {value:.0f} сағ өтті"
+    ru_missing: "плановое ТО в истории не найдено"
+    kk_missing: "тарихта жоспарлы ТҚ табылмады"
+  hours_since_repair:
+    ru: "с последнего ремонта прошло {value:.0f} ч"
+    kk: "соңғы жөндеуден бері {value:.0f} сағ өтті"
+    ru_missing: "ремонтов в истории нет"
+    kk_missing: "тарихта жөндеу жоқ"
+  hours_since_wear_repair:
+    ru: "с последнего ремонта по износу прошло {value:.0f} ч"
+    kk: "тозуға байланысты соңғы жөндеуден бері {value:.0f} сағ өтті"
+    ru_missing: "ремонтов по износу в истории нет"
+    kk_missing: "тарихта тозуға байланысты жөндеу жоқ"
+  cycles_since_pm:
+    ru: "циклов с последнего ТО: {value:.0f}"
+    kk: "соңғы ТҚ-дан бергі циклдер: {value:.0f}"
+    ru_missing: "плановое ТО в истории не найдено"
+    kk_missing: "тарихта жоспарлы ТҚ табылмады"
+  shift:
+    ru: "сейчас {shift}"
+    kk: "қазір {shift}"
+  work_hours_ahead:
+    ru: "в ближайшие {horizon:.0f} ч по графику {value:.1f} ч работы"
+    kk: "алдағы {horizon:.0f} сағатта кесте бойынша {value:.1f} сағ жұмыс"
+
+# Подписи, которые подставляются в шаблоны.
+labels:
+  off_shift: { ru: "вне смены", kk: "ауысымнан тыс" }
+  missing:   { ru: "{feature}: нет данных", kk: "{feature}: дерек жоқ" }
