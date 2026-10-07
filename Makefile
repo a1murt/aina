@@ -93,7 +93,7 @@ demo-reset: ## reset the live tail to demo_start (M4/M9)
 	@echo "make demo-reset: not implemented until M4"
 
 tagmap: ## generate config/tag_map.demo.yaml from the OPC UA address space (M2)
-	@echo "make tagmap: not implemented until M2"
+	$(UV) run --package qost-sim python -m qost_sim tagmap --out config/tag_map.demo.yaml
 
 ml-dataset: ## PdM dataset via sim ml-dataset mode (M7)
 	$(UV) run --package qost-ml python -m qost_ml dataset

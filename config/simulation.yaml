@@ -16,6 +16,9 @@ process:
   sequencing: heijunka                                                # равномерное чередование моделей
   shift_b_defect_factor: 1.10
   initial_buffers: { BIW: 12, PBS: 18, EOL: 4 }
+  # нет комплекта модели по очереди heijunka: resequence — пропустить модель (WELD-1 STARVED/MAT-SHORTAGE,
+  # только если комплектов нет ни для одной модели); wait — ждать комплект (буквально SPEC §6.2)
+  ckd_shortage_policy: resequence
 
 # Отказы: mtbf_h — средняя наработка между отказами по всем причинам при degradation=0; reasons — доли причин.
 # Для причин из wear_reasons интенсивность растёт с износом: lambda(d) = lambda0 * (1 + wear_hazard_gain * d^3);
@@ -39,6 +42,7 @@ failures:
     mtbf_h: 300
     mttr: { median: 30, sigma: 0.4 }
     reasons: { EL-DRIVE: 0.5, EL-SENSOR: 0.5 }
+    wear_reasons: [EL-DRIVE]   # износа нет (d = 0), но перед отказом привода печи — дрейф температуры (предвестник)
   conveyor:
     mtbf_h: 300
     mttr: { median: 25, sigma: 0.4 }
@@ -55,13 +59,16 @@ microstops:   # короче microstop_threshold_s → потеря произв
   robot:    { mtbf_h: 8, duration: { median: 1.5, sigma: 0.5 }, reason: MT-CONSUMABLE }
 
 degradation:  # скрытое состояние износа d ∈ [0, 1]; прирост за час работы ~ Gamma(shape, mean/shape)
-  # reset_after_repair — износ после ремонта по причине из wear_reasons; pm_reduction — на сколько снижает износ плановое ТО (минимум 0.05)
+  # reset_after_repair — износ после ремонта по причине из wear_reasons; pm_reduction — на сколько снижает износ плановое ТО;
+  # pm_floor — ниже этого значения плановое ТО износ не снижает
   wear_hazard_gain: 15
-  robot:    { mean_rate_per_h: 0.0025, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.30 }
-  fixture:  { mean_rate_per_h: 0.0012, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.30 }
-  conveyor: { mean_rate_per_h: 0.0017, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.00 }   # чистка не снимает вытяжку цепи
+  robot:    { mean_rate_per_h: 0.0025, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.30, pm_floor: 0.05 }
+  fixture:  { mean_rate_per_h: 0.0012, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.30, pm_floor: 0.05 }
+  conveyor: { mean_rate_per_h: 0.0017, shape: 2.0, reset_after_repair: 0.10, pm_reduction: 0.00, pm_floor: 0.05 }   # чистка не снимает вытяжку цепи
 
 paint_filters:  # перепад давления растёт линейно; на пределе камера встаёт на замену (MT-FILTER)
+  equipment_type: booth     # у единиц этого типа есть фильтры (скрытое состояние ΔP)
+  signal: filter_dp_pa      # телеметрия ΔP; set_state по этому сигналу задаёт состояние фильтра
   dp_start_pa: 150
   dp_rate_pa_per_h: { mean: 7.0, sd: 1.0 }
   dp_limit_pa: 450
@@ -73,13 +80,18 @@ planned_maintenance:
   - { equipment_type: conveyor, every_working_days: 5,  duration_min: 20, at: shift_start, shift: A, stagger: true, reason: PM-CLEANING }
 
 defects:
-  WELD:  { base: 0.018, robot_wear_gain: 0.020, types: { W-SPOT: 0.6, W-GEOM: 0.15, W-SPATTER: 0.25 } }
-  PAINT: { base: 0.025, dp_gain: 0.040, dp_from_pa: 300, humidity_out_of_spec_add: 0.015,
+  WELD:  { base: 0.018, robot_wear_gain: 0.020, wear_equipment_type: robot, types: { W-SPOT: 0.6, W-GEOM: 0.15, W-SPATTER: 0.25 } }
+  PAINT: { base: 0.025, dp_gain: 0.040, dp_from_pa: 300, humidity_out_of_spec_add: 0.015, humidity_signal: humidity_pct,
            types: { P-DUST: 0.45, P-RUN: 0.15, P-ORANGE: 0.10, P-THIN: 0.15, P-COLOR: 0.15 } }
   ASSY:  { base: 0.012, types: { A-TORQUE: 0.35, A-MISSING: 0.20, A-ELECTRIC: 0.30, A-SCRATCH: 0.15 } }
   QC:    { base: 0.010, types: { Q-ALIGN: 0.5, Q-LEAK: 0.3, Q-BRAKE: 0.2 } }
   scrap_share_of_defects: 0.002
 
+# Модели сигналов — выражения: + - * / ^, sin/cos/exp/log/sqrt/abs/min/max/clip, N(mu, sd), Poisson(lam), pi.
+# Переменные: d — износ, t — час суток (местное время), phase — фаза единицы (случайная, 0..2π),
+# dp_start / rate / hours_since_change — фильтры (тип paint_filters.equipment_type), сигналы, вычисленные выше.
+# precursor(h) — 0 → 1 за последние h часов работы перед ближайшим отказом по износовой причине (wear_reasons,
+# chain_break) — случайные отказы предвестников не имеют (SPEC §11.1).
 telemetry:  # d — износ, t — часы суток
   sample_period_s: 60              # live
   backfill_sample_period_s: 300    # backfill и ml-dataset (NFR-08); признаки PdM — на сетке 5 мин
@@ -95,7 +107,7 @@ telemetry:  # d — износ, t — часы суток
     air_temp_c: "23 + 1.2*sin(2*pi*t/24) + N(0, 0.3)"
     airflow_mps: "0.42 - 0.0004*(filter_dp_pa - 150) + N(0, 0.01)"
   oven:
-    oven_temp_c: "140 + N(0, 1.2) (+ дрейф до 8 °C за 2 ч до отказа)"
+    oven_temp_c: "140 + 8*precursor(2) + N(0, 1.2)"    # дрейф до 8 °C за 2 ч до отказа привода
   conveyor:
     motor_current_a: "18 + 9*d + N(0, 0.6)"
     vibration_mm_s: "2.0 + 5.5*d^2 + N(0, 0.25)"

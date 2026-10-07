@@ -25,7 +25,7 @@ from twin_core.config.common import (
     Range,
     StrictModel,
 )
-from twin_core.domain import FilterPolicy
+from twin_core.domain import CkdShortagePolicy, FilterPolicy
 
 _SUM_TOLERANCE = 1e-3
 
@@ -68,7 +68,9 @@ class Process(StrictModel):
     """Product code -> share of the sequence; must sum to 1."""
     sequencing: Literal["heijunka"]
     shift_b_defect_factor: PositiveFloat
+    """Defect-probability factor for every shift after the first one of the day."""
     initial_buffers: dict[Code, NonNegativeInt] = {}
+    ckd_shortage_policy: CkdShortagePolicy = "resequence"
 
     @model_validator(mode="after")
     def _mix(self) -> Process:
@@ -110,6 +112,8 @@ class DegradationParams(StrictModel):
     shape: PositiveFloat
     reset_after_repair: Fraction
     pm_reduction: Fraction
+    pm_floor: Fraction = 0.0
+    """Wear never drops below this value after planned maintenance."""
 
 
 class Degradation(_ExtrasModel):
@@ -133,6 +137,10 @@ class Replacement(LogNormal):
 
 
 class PaintFilters(StrictModel):
+    equipment_type: Ident
+    """Equipment type that carries the filters (its units get the hidden pressure-drop state)."""
+    signal: Ident
+    """Telemetry signal showing the filter pressure drop; ``set_state`` on it sets the state."""
     dp_start_pa: NonNegativeFloat
     dp_rate_pa_per_h: RateDist
     dp_limit_pa: PositiveFloat
@@ -161,14 +169,24 @@ class AreaDefects(StrictModel):
     types: Annotated[dict[Code, PositiveFloat], Field(min_length=1)]
     """Defect code -> relative weight."""
     robot_wear_gain: NonNegativeFloat | None = None
+    """Added defect probability per unit of mean wear of ``wear_equipment_type`` units."""
+    wear_equipment_type: Ident | None = None
     dp_gain: NonNegativeFloat | None = None
     dp_from_pa: NonNegativeFloat | None = None
     humidity_out_of_spec_add: Fraction | None = None
+    """Added defect probability while ``humidity_signal`` is outside its warn_lo..warn_hi."""
+    humidity_signal: Ident | None = None
 
     @model_validator(mode="after")
-    def _dp_pair(self) -> AreaDefects:
-        if (self.dp_gain is None) != (self.dp_from_pa is None):
-            raise ValueError("dp_gain and dp_from_pa must be given together")
+    def _pairs(self) -> AreaDefects:
+        pairs = (
+            ("dp_gain", "dp_from_pa"),
+            ("robot_wear_gain", "wear_equipment_type"),
+            ("humidity_out_of_spec_add", "humidity_signal"),
+        )
+        for first, second in pairs:
+            if (getattr(self, first) is None) != (getattr(self, second) is None):
+                raise ValueError(f"{first} and {second} must be given together")
         return self
 
 
