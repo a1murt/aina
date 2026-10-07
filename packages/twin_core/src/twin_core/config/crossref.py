@@ -504,13 +504,22 @@ def _check_simulation(c: _Checker, m: Models) -> None:
         c.ref(SIMULATION, ("degradation", type_code), type_code, types, "equipment type")
 
     if sim.paint_filters is not None:
-        c.ref(
+        pf = sim.paint_filters
+        unplanned_reason(("paint_filters", "replacement", "reason"), pf.replacement.reason)
+        if c.ref(
             SIMULATION,
-            ("paint_filters", "replacement", "reason"),
-            sim.paint_filters.replacement.reason,
-            reasons,
-            "reason code",
-        )
+            ("paint_filters", "equipment_type"),
+            pf.equipment_type,
+            types,
+            "equipment type",
+        ):
+            c.ref(
+                SIMULATION,
+                ("paint_filters", "signal"),
+                pf.signal,
+                signals[pf.equipment_type],
+                f"signal of type '{pf.equipment_type}'",
+            )
 
     for i, pm in enumerate(sim.planned_maintenance):
         base = ("planned_maintenance", i)
@@ -527,9 +536,44 @@ def _check_simulation(c: _Checker, m: Models) -> None:
             )
 
     # defects: per area, defect types must belong to that area (or ANY)
+    area_types: dict[str, list[str]] = {
+        area.code: [eq.type for line in area.lines for eq in line.equipment] for area in plant.areas
+    }
+    signal_defs = {
+        (type_code, signal.code): signal
+        for type_code, etype in types.items()
+        for signal in etype.signals
+    }
     for area_code, area_defects in sim.defects.per_area.items():
         base = ("defects", area_code)
         c.ref(SIMULATION, base, area_code, areas, "area")
+        in_area = area_types.get(area_code, [])
+        wear_type = area_defects.wear_equipment_type
+        if (
+            wear_type is not None
+            and c.ref(
+                SIMULATION, (*base, "wear_equipment_type"), wear_type, in_area, "type in this area"
+            )
+            and wear_type not in sim.degradation.per_type
+        ):
+            c.add(
+                SIMULATION,
+                (*base, "wear_equipment_type"),
+                f"type '{wear_type}' has no degradation parameters (degradation.{wear_type})",
+            )
+        humidity = area_defects.humidity_signal
+        if humidity is not None:
+            found = [signal_defs[(t, humidity)] for t in in_area if (t, humidity) in signal_defs]
+            area_signals = sorted({s for t in in_area for s in signals.get(t, set())})
+            if c.ref(
+                SIMULATION, (*base, "humidity_signal"), humidity, area_signals, "signal in area"
+            ) and any(s.warn_lo is None or s.warn_hi is None for s in found):
+                c.add(
+                    SIMULATION,
+                    (*base, "humidity_signal"),
+                    f"signal '{humidity}' needs warn_lo and warn_hi in plant.yaml "
+                    "(they define the in-spec band)",
+                )
         for code in area_defects.types:
             loc = (*base, "types", code)
             if (

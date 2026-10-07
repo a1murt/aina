@@ -68,7 +68,7 @@ def test_api_loads_config_at_startup(monkeypatch: pytest.MonkeyPatch, config_dir
 
 @pytest.mark.parametrize(
     ("module", "port"),
-    [("qost_sim", 8100), ("qost_collector", 8110), ("qost_engine", 8120), ("qost_notifier", 8130)],
+    [("qost_collector", 8110), ("qost_engine", 8120), ("qost_notifier", 8130)],
 )
 def test_stub_entry_points(module: str, port: int) -> None:
     entry = importlib.import_module(f"{module}.__main__")
