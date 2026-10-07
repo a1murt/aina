@@ -41,3 +41,7 @@ Disposition = Literal["rework", "scrap"]
 ReasonBucket = Literal["own", "external"]
 
 FilterPolicy = Literal["on_limit", "predictive_shift_change"]
+
+CkdShortagePolicy = Literal["resequence", "wait"]
+"""What the first line does when the sequenced model has no CKD kits (simulation.yaml):
+``resequence`` — skip models without kits; ``wait`` — wait for the kit (SPEC §6.2 literal)."""

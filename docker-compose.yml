@@ -86,7 +86,8 @@ services:
       - "4840:4840"   # OPC UA
       - "8100:8100"   # demo control API
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8100/healthz', timeout=3)"]
+      # ready = warm-up to demo_start done and the OPC UA server is up (collector depends on it)
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8100/readyz', timeout=3)"]
       <<: *healthcheck-timing
 
   collector:
