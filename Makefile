@@ -58,7 +58,7 @@ py-type:
 	$(UV) run mypy
 
 py-test:
-	$(UV) run pytest -m "not integration" -q
+	$(UV) run pytest -m "not integration and not ml" -q
 
 web-check: web-install
 	$(PNPM) --dir $(WEB) lint
@@ -95,8 +95,14 @@ demo-reset: ## reset the live tail to demo_start (M4/M9)
 tagmap: ## generate config/tag_map.demo.yaml from the OPC UA address space (M2)
 	$(UV) run --package qost-sim python -m qost_sim tagmap --out config/tag_map.demo.yaml
 
-ml-dataset: ## PdM dataset via sim ml-dataset mode (M7)
-	$(UV) run --package qost-ml python -m qost_ml dataset
+ML_RAW := ml/data/raw
+ML_FEATURES := ml/data/features
 
-ml-train: ## train LightGBM models, write model cards (M7)
-	$(UV) run --package qost-ml python -m qost_ml train
+ml-dataset: ## PdM dataset: sim ml-dataset (12 months, seed 7) -> 15-min features + labels (M7)
+	$(UV) run --package qost-sim python -m qost_sim ml-dataset --out $(ML_RAW)
+	$(UV) run --package qost-ml python -m qost_ml dataset --raw $(ML_RAW) --out $(ML_FEATURES)
+
+ml-train: ## train LightGBM robot/conveyor -> ml/models, model cards, T-ML metric checks (M7)
+	@test -f $(ML_FEATURES)/meta.json || $(MAKE) ml-dataset
+	$(UV) run --package qost-ml python -m qost_ml train --features $(ML_FEATURES) --models ml/models
+	$(UV) run pytest -m ml -q

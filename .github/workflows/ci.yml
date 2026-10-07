@@ -1,5 +1,6 @@
 # Lint, type-check and unit tests on every push / PR (SPEC §4.3, NFR-10).
-# Integration tests (pytest -m integration) need the compose stack and run locally via `make test`.
+# Integration tests (pytest -m integration) need the compose stack and run locally via `make test`;
+# the full PdM training check (pytest -m ml) needs `make ml-dataset` and runs via `make ml-train`.
 name: ci
 
 on:
@@ -29,8 +30,8 @@ jobs:
           uv run ruff format --check .
       - name: Mypy (strict)
         run: uv run mypy
-      - name: Pytest (unit, no integration)
-        run: uv run pytest -m "not integration" -q
+      - name: Pytest (unit, no integration, no full ML run)
+        run: uv run pytest -m "not integration and not ml" -q
 
   web:
     runs-on: ubuntu-latest

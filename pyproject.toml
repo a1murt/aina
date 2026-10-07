@@ -27,6 +27,8 @@ dev = [
 
 [tool.uv]
 package = false
+# shap -> numba: without a floor the resolver backtracks to llvmlite 0.36 (Python < 3.10 only).
+constraint-dependencies = ["numba>=0.60"]
 
 [tool.uv.workspace]
 members = [
@@ -99,6 +101,11 @@ files = [
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 
+# Libraries without type information (SPEC §4.3 stack): scipy, scikit-learn, shap.
+[[tool.mypy.overrides]]
+module = ["scipy.*", "sklearn.*", "shap.*"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true
@@ -111,6 +118,7 @@ pythonpath = ["tests"]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [
     "integration: needs running infrastructure (make up); excluded from make check",
+    "ml: full 12-month PdM training and metric thresholds (make ml-train); excluded from make check",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

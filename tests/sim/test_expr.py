@@ -19,7 +19,13 @@ def test_every_configured_signal_model_compiles(cfg: TwinConfig) -> None:
         assert [m.code for m in models[type_code]] == list(signals)
     oven = models["oven"][0].expr
     assert oven.uses_precursor
-    assert not any(m.expr.uses_precursor for t, ms in models.items() if t != "oven" for m in ms)
+    # precursors only make sense for types with wear-reason failures (M7: robot, conveyor, oven)
+    wearing = {
+        t for t, f in cfg.simulation.failures.items() if f.wear_reasons or f.chain_break is not None
+    }
+    with_precursor = {t for t, ms in models.items() for m in ms if m.expr.uses_precursor}
+    assert with_precursor <= wearing
+    assert {"robot", "conveyor", "oven"} <= with_precursor
     booth = {m.code: m.expr for m in models["booth"]}
     assert booth["filter_dp_pa"].names == {"dp_start", "rate", "hours_since_change"}
     assert "filter_dp_pa" in booth["airflow_mps"].names
