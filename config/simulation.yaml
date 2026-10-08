@@ -156,3 +156,37 @@ scenarios:
     name_ru: "Задержка поставки комплектов J7"
     inject: { type: ckd, product: J7, set_kits: 40, delay_next_lot_days: 4 }
     at_min: null
+
+# Прогноз (SPEC §10): калибровка по истории и быстрая модель Монте-Карло. Все ключи необязательны.
+forecast:
+  window_days: 20              # окно калибровки — последние N полных рабочих дней
+  step_min: 60                 # шаг быстрой модели, минуты рабочего времени
+  seed: null                   # null — clock.random_seed (общие случайные числа база/сценарий)
+  n_runs: { default: 5000, max: 20000, levers: 2000, min: 100 }
+  parameter_uncertainty: true  # интенсивности, эффективность и брак — из апостериорных распределений
+  eff_basis: net               # net — скорость линии без потерь, которые модель учитывает сама; iso — E по ISO 22400
+  priors:
+    prior_strength: 2          # псевдо-отказы априорного Gamma
+    min_failures: 3            # меньше отказов в окне — байесовская оценка с априором
+    min_repairs: 3
+    eff_min_shifts: 5
+    eff_min_apt_min: 60
+    eff_concentration: 200
+    defect_min_units: 200
+    defect_concentration: 100
+    filter_min_lives: 3
+  predictive_filter:
+    service_loss_min: 0        # плановая замена фильтра в пересменку; ночной перерыв поглощает её целиком
+  histogram_bins: 30
+  levers:
+    failure_free_multiplier: 1000            # «устранить внеплановые отказы» = mtbf_multiplier 1000
+    extra_shift: { weekday: 6, shifts: [A] } # «+1 субботняя смена»
+    buffer: { code: PBS, add: 10 }           # «+10 мест в PBS»
+    top: 5
+    rank_by: effect_kzt                      # effect_kzt | delta_p50
+    shifts_needed:                           # сколько доп. смен нужно, чтобы P(цели) > p_goal
+      p_goal: 0.5
+      candidates:
+        saturdays: { weekdays: [6] }                                           # только субботы (смены A и B)
+        weekends_and_holidays: { weekdays: [6, 7], include_holidays: true }    # субботы, воскресенья и праздники
+  max_concurrent: 2

@@ -16,6 +16,7 @@ thresholds:
   buffer_high_ratio: 0.90                   # риск блокировки предыдущего участка
   plan_risk_warn_p: 0.50                    # P(выполнить план месяца) ниже — предупреждение директору
   plan_risk_crit_p: 0.20
+  plan_risk_target: line_plan                # AL-P1 следит за планом линии (4 800) | plant_target (5 500 — без доп. смен недостижимо)
   pdm_horizon_h: 8                          # горизонт прогноза отказа
   pdm_warn_p: 0.50
   pdm_crit_p: 0.80
@@ -78,7 +79,7 @@ alert_rules:
     channels: [ui]
   - id: AL-P1
     name_ru: "Риск невыполнения плана месяца"
-    when: "P(выпуск месяца >= plant_target) < plan_risk_warn_p (warning) / < plan_risk_crit_p (critical)"
+    when: "P(выпуск месяца >= цель thresholds.plan_risk_target) < plan_risk_warn_p (warning) / < plan_risk_crit_p (critical)"
     recipients: [director]
     channels: [ui, telegram]
   - id: AL-M1
