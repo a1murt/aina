@@ -118,6 +118,7 @@ class Stack:
     speed: float = 60.0
     collector_db_url: str | None = None
     engine_db_url: str | None = None
+    redis_url: str = REDIS_URL
     prefix: str = field(default_factory=lambda: f"it{uuid.uuid4().hex[:6]}")
     procs: dict[str, subprocess.Popen[bytes]] = field(default_factory=dict)
     ports: dict[str, int] = field(default_factory=dict)
@@ -128,7 +129,7 @@ class Stack:
         self.topic_root = f"{self.prefix}/qost/v1/KST"
         self.control = f"{self.prefix}:sim:control"
         self.channel = f"{self.prefix}:live"
-        self.redis = Redis.from_url(REDIS_URL)
+        self.redis = Redis.from_url(self.redis_url)
 
     # ------------------------------------------------------------------ processes
 
@@ -144,7 +145,7 @@ class Stack:
                 "PLANT_CONFIG_DIR": str(CONFIG_DIR),
                 "PLANT_TAG_MAP": str(CONFIG_DIR / "tag_map.demo.yaml"),
                 "DATABASE_URL": url_string(self.db_url),
-                "REDIS_URL": REDIS_URL,
+                "REDIS_URL": self.redis_url,
                 "MQTT_URL": f"mqtt://{MQTT_HOST}:1883",
                 "CLOCK_MODE": "sim",
                 "SIM_CONTROL_CHANNEL": self.control,

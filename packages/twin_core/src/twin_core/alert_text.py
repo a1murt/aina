@@ -196,7 +196,13 @@ def limit_text_ru(cfg: TwinConfig, equipment: str, value: dict[str, Any]) -> str
             head += f" (около {local_time(str(value['limit_at']), cfg)[-5:]})"
     window = value.get("window")
     if window:
-        tail = f"заменить/обслужить в пересменку {local_time(str(window), cfg)[-5:]}"
+        filters = cfg.simulation.paint_filters
+        verb = (
+            "заменить фильтры"
+            if filters is not None and cfg.equipment[equipment].type == filters.equipment_type
+            else "обслужить"
+        )
+        tail = f"{verb} в пересменку {local_time(str(window), cfg)[-5:]}"
     else:
         tail = "обслужить сейчас — предел наступит раньше ближайшей пересменки"
     saving = ""

@@ -393,9 +393,12 @@ class EngineService:
             if slot is None:
                 continue
             epoch, core = self.epoch, self.core
+            asof = slot + timedelta(seconds=self.settings.engine_pdm_settle_s)
             try:
-                await self.pdm_feed.refresh(self.pdm_cache, slot)
-                tick = await asyncio.to_thread(self.serving.evaluate, self.pdm_cache, slot)
+                await self.pdm_feed.refresh(self.pdm_cache, asof)
+                tick = await asyncio.to_thread(
+                    self.serving.evaluate, self.pdm_cache, slot, None, asof
+                )
             except Exception as exc:
                 self.pdm_errors += 1
                 self._pdm_retry_wall = time.monotonic() + self.settings.engine_pdm_retry_s
@@ -405,6 +408,21 @@ class EngineService:
             if self.paused or self.epoch != epoch or self.core is not core:
                 continue  # a demo reset happened meanwhile
             core.apply_pdm(tick)
+            log.info(
+                "pdm_tick",
+                slot=slot.isoformat(),
+                units=len(tick.units),
+                limits=[
+                    (
+                        i.equipment,
+                        i.signal,
+                        i.hours_to_limit and round(i.hours_to_limit, 1),
+                        i.n_points,
+                    )
+                    for i in tick.limits
+                    if i.alert
+                ],
+            )
             effects, live = core.drain()
             self.pending.extend(effects)
             self._live_buffer.extend(live)

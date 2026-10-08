@@ -8,8 +8,8 @@ time to a signal limit (AL-M2), every ``rules.yaml: engine.pdm_tick_min`` plant 
 * :class:`PdmServing` — pure and synchronous (run it in a thread): per unit
   ``qost_ml.features.history_from_arrays`` → ``features_at`` → ``Predictor.predict`` and, for
   signals with ``limit_hi``, :func:`twin_core.limits.unit_limit_advice` on the working-time axis.
-  The simulator's hidden wear state is never read (rule 5): features are built from the telemetry, the
-  stops and the exits only.
+  The simulator's hidden wear state is never read (rule 5): features come from the telemetry,
+  the stops and the exits only.
 
 ``qost_ml`` (LightGBM, SHAP) is imported when the serving is created, not when the engine starts
 without PdM (``ENGINE_PDM=false``).
@@ -240,7 +240,15 @@ class PdmServing:
 
     # ------------------------------------------------------------------ evaluation
 
-    def evaluate(self, cache: PdmCache, now: datetime, thresholds: Any | None = None) -> PdmTick:
+    def evaluate(
+        self,
+        cache: PdmCache,
+        now: datetime,
+        thresholds: Any | None = None,
+        limits_now: datetime | None = None,
+    ) -> PdmTick:
+        """Predictions at ``now`` (the slot); limit forecasts at ``limits_now`` (default ``now``):
+        the engine passes slot + settle so a level shift at the slot (S2) already has samples."""
         thr = thresholds or self.cfg.rules.thresholds
         units: list[UnitPrediction] = []
         for code in self.spec.equipment:
@@ -251,7 +259,7 @@ class PdmServing:
         return PdmTick(
             ts=now,
             units=tuple(units),
-            limits=tuple(self._limits(cache, now, thr)),
+            limits=tuple(self._limits(cache, limits_now or now, thr)),
             lookahead_h=float(thr.telemetry_limit_lookahead_h),
         )
 
@@ -292,6 +300,7 @@ class PdmServing:
         working = WorkingTime(self.cfg.calendar, now)
         lo_us = to_us(now - timedelta(days=HISTORY_DAYS))
         threshold_us = int(thr.microstop_threshold_s * US)
+        fresh_us = int(self.cfg.rules.engine.pdm_fresh_s * US)
         out: list[LimitItem] = []
         for code, equipment_type in self.limited.items():
             series: dict[str, tuple[list[datetime], list[float]]] = {}
@@ -299,6 +308,8 @@ class PdmServing:
                 if sig.limit_hi is None or (code, sig.code) not in cache.series:
                     continue
                 ts, vals = cache.series[(code, sig.code)]
+                if len(ts) == 0 or to_us(now) - int(ts[-1]) > fresh_us:
+                    continue  # stale: no sample for minutes, the forecast would be old news
                 start = int(np.searchsorted(ts, lo_us))
                 series[sig.code] = ([from_us(int(t)) for t in ts[start:]], vals[start:].tolist())
             if not series:

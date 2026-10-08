@@ -121,6 +121,8 @@ class EngineParams(StrictModel):
     """AL-M1 resolves when p_failure falls below ``ratio x pdm_warn_p`` (hysteresis)."""
     pdm_lookahead_clear: PositiveFloat = 1.0
     """AL-M2 resolves when the time to the limit exceeds the look-ahead by this many hours."""
+    pdm_fresh_s: PositiveFloat = 150.0
+    """AL-M2 ignores a signal whose newest sample is older than this (stale data raises nothing)."""
     pdm_stops_days: PositiveInt = 60
     """Stop history given to the PdM features (hours since maintenance / repair, cycles)."""
     spc_history_shifts: PositiveInt = 40
