@@ -73,7 +73,8 @@ def alerts(effects: list[Any], rule: str) -> list[AlertUpsert]:
 def test_ticks_every_15_plant_minutes_after_the_settle_time(cfg: TwinConfig) -> None:
     core = started(cfg)
     assert core.params.pdm_tick_min == 15
-    assert core.pdm_slot(at(1), 120) == at(-15)  # 02:01: the 02:00 slot has not settled yet
+    # a fresh start serves the current slot only (not the one before demo_start)
+    assert core.pdm_slot(at(1), 120) is None  # 02:01: the 02:00 slot has not settled yet
     first = core.pdm_slot(at(3), 120)  # the 02:00 slot is served from 02:02
     assert first == at(0)
     core.apply_pdm(PdmTick(first, ()))

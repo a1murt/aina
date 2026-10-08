@@ -1141,6 +1141,9 @@ class EngineCore:
         step = self.params.pdm_tick_min * 60.0
         t = to_sec(now)
         slot = math.floor((t - settle_s) / step) * step
+        if self.st.pdm_last is None:
+            # a fresh start serves the slot that is current now, not the history before it
+            self.st.pdm_last = math.floor(t / step) * step - step
         last = self.st.pdm_last
         if last is not None and slot <= last:
             return None

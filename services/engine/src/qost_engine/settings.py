@@ -38,8 +38,9 @@ class EngineSettings(BaseSettings):
     engine_reset_wait_s: float = 2.0
     engine_pdm: bool = True
     """PdM serving (p_failure, health index, AL-M1/AL-M2); off — the engine runs without ML."""
-    engine_pdm_settle_s: float = 120.0
-    """A tick waits this much plant time after its slot so the collector has written the data."""
+    engine_pdm_settle_s: float = 300.0
+    """A tick waits this much plant time after its slot: the collector has written the data and a
+    level shift at the slot (S2) has samples; limit forecasts are evaluated at slot + settle."""
     engine_pdm_retry_s: float = 5.0
     """Wall time before a failed tick is retried."""
     health_port: int = 8120
