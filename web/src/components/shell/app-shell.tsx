@@ -2,6 +2,7 @@
 
 import {
   Factory,
+  FileText,
   FileUp,
   LayoutDashboard,
   ShieldCheck,
@@ -31,6 +32,7 @@ const ICONS: Record<ScreenKey, LucideIcon> = {
   maintenance: Wrench,
   quality: ShieldCheck,
   import: FileUp,
+  reports: FileText,
   demo: SlidersHorizontal,
 };
 
