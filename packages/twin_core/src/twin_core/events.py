@@ -53,6 +53,8 @@ CkdEventType = Literal["consume", "delivery", "set"]
 
 FIRST_EXIT_RESULTS: frozenset[str] = frozenset({"pass", "defect", "scrap"})
 """Unit results that count in PQ (first exit of a body from a line)."""
+FINISHED_RESULTS: frozenset[str] = frozenset({"pass", "rework_pass"})
+"""Unit results at the last flow line that make a finished car (scrap never does)."""
 
 # --------------------------------------------------------------------------- ULID
 
@@ -343,6 +345,7 @@ def to_dict(event: EventBase) -> dict[str, Any]:
 
 __all__ = [
     "EVENT_CLASSES",
+    "FINISHED_RESULTS",
     "FIRST_EXIT_RESULTS",
     "ULID_PATTERN",
     "AlarmData",

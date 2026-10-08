@@ -25,6 +25,7 @@ from twin_core.config.common import (
     Range,
     StrictModel,
 )
+from twin_core.config.forecast import ForecastConfig
 from twin_core.domain import CkdShortagePolicy, FilterPolicy
 
 _SUM_TOLERANCE = 1e-3
@@ -340,3 +341,4 @@ class SimulationConfig(StrictModel):
     calibration_targets: CalibrationTargets
     ml_dataset: MlDataset
     scenarios: list[Scenario] = []
+    forecast: ForecastConfig = ForecastConfig()

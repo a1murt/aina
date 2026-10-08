@@ -19,7 +19,7 @@ HOST_REDIS_URL ?= redis://localhost:6379/0
 export NEXT_TELEMETRY_DISABLED := 1
 
 .PHONY: help up down ps logs check test fmt py-lint py-type py-test web-check web-install \
-	migrate config-check seed demo demo-reset tagmap ml-dataset ml-train
+	migrate config-check seed demo demo-reset tagmap ml-dataset ml-train forecast-validate
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -58,7 +58,7 @@ py-type:
 	$(UV) run mypy
 
 py-test:
-	$(UV) run pytest -m "not integration and not ml" -q
+	$(UV) run pytest -m "not integration and not ml and not validation" -q
 
 web-check: web-install
 	$(PNPM) --dir $(WEB) lint
@@ -101,6 +101,9 @@ ML_FEATURES := ml/data/features
 ml-dataset: ## PdM dataset: sim ml-dataset (12 months, seed 7) -> 15-min features + labels (M7)
 	$(UV) run --package qost-sim python -m qost_sim ml-dataset --out $(ML_RAW)
 	$(UV) run --package qost-ml python -m qost_ml dataset --raw $(ML_RAW) --out $(ML_FEATURES)
+
+forecast-validate: ## fast forecast vs the virtual plant: bias and P10-P90 coverage over 60 seeds (M6)
+	$(UV) run --package qost-sim python -m qost_sim.forecast_validation --seeds 60
 
 ml-train: ## train LightGBM robot/conveyor -> ml/models, model cards, T-ML metric checks (M7)
 	@test -f $(ML_FEATURES)/meta.json || $(MAKE) ml-dataset

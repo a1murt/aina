@@ -27,6 +27,7 @@ AL_OEE_BELOW: Final = "AL-O1"
 AL_OEE_NEAR: Final = "AL-O2"
 AL_DEFECT_RATE: Final = "AL-Q1"
 AL_SYSTEMIC_DEFECTS: Final = "AL-Q3"
+AL_PLAN_RISK: Final = "AL-P1"
 
 PLANT_ENTITY: Final = "PLANT"
 """Entity of plant-wide alerts (AL-Q3)."""
@@ -178,3 +179,33 @@ class AlertEvaluator:
         if not (rose and over):
             return None
         return Alert(AL_SYSTEMIC_DEFECTS, severity, "site", PLANT_ENTITY, period_date, rates, shift)
+
+    def plan_risk(self, *, period_date: date, forecast: Mapping[str, Any]) -> Alert | None:
+        """AL-P1: P(month total >= target) < ``plan_risk_warn_p`` (warning) / ``plan_risk_crit_p``
+        (critical).
+
+        ``forecast`` is a forecast result (``ForecastResult.model_dump(mode="json")`` or the JSON
+        stored in ``forecast_run.result``). The target is ``thresholds.plan_risk_target``:
+        ``line_plan`` by default, because the plant target (5 500) is above the line ceiling
+        without extra shifts (123.6 x 42 = 5 191) and would keep the alert critical all month.
+        """
+        if not self.enabled(AL_PLAN_RISK):
+            return None
+        t = self.thresholds
+        p = (forecast.get("p_reach") or {}).get(t.plan_risk_target)
+        qty = (forecast.get("targets") or {}).get(t.plan_risk_target)
+        if p is None or qty is None:
+            return None
+        prob = round_fraction(float(p))
+        severity: Severity
+        if prob < t.plan_risk_crit_p:
+            severity = "critical"
+        elif prob < t.plan_risk_warn_p:
+            severity = "warning"
+        else:
+            return None
+        value: dict[str, float] = {"p": prob, "target_qty": float(qty)}
+        summary = forecast.get("summary") or {}
+        if "p50" in summary:
+            value["p50"] = float(summary["p50"])
+        return Alert(AL_PLAN_RISK, severity, "site", PLANT_ENTITY, period_date, value)
