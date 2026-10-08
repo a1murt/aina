@@ -12,13 +12,14 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from api_support import bearer
 from forecast_support import MemoryBackend, demo_history, memory_backend
 from qost_api.app import create_app
 from twin_core.clock import ManualClock
 from twin_core.config import TwinConfig
 
 PROBLEM = "application/problem+json"
-DIRECTOR = {"X-Dev-Role": "director"}
+DIRECTOR = bearer("director")
 
 
 @pytest.fixture
@@ -97,21 +98,21 @@ def test_baseline_is_cached_between_what_ifs(client: TestClient, backend: Memory
 
 @pytest.mark.parametrize("role", ["operator", "master", "quality", "maintenance"])
 def test_forecast_roles(client: TestClient, role: str) -> None:
-    response = client.post("/api/v1/forecast", json={}, headers={"X-Dev-Role": role})
+    response = client.post("/api/v1/forecast", json={}, headers=bearer(role))
     assert response.status_code == 403
     assert response.headers["content-type"] == PROBLEM
 
 
 def test_calibration_roles_and_shape(client: TestClient) -> None:
-    ok = client.get("/api/v1/calibration", headers={"X-Dev-Role": "maintenance"})
+    ok = client.get("/api/v1/calibration", headers=bearer("maintenance"))
     assert ok.status_code == 200
     body = ok.json()
     assert body["window_days"] == 20
     params = body["params"]
     assert params["equipment"]["CONV-03"]["failures"]["source"] in ("data", "prior")
     assert set(params["areas"]) == {"WELD", "PAINT", "ASSY", "QC"}
-    assert client.get("/api/v1/calibration", headers={"X-Dev-Role": "operator"}).status_code == 403
-    again = client.get("/api/v1/calibration", headers={"X-Dev-Role": "admin"}).json()
+    assert client.get("/api/v1/calibration", headers=bearer("operator")).status_code == 403
+    again = client.get("/api/v1/calibration", headers=bearer("admin")).json()
     assert again["id"] == body["id"]
 
 
@@ -164,7 +165,7 @@ def test_levers_endpoint(client: TestClient) -> None:
     assert set(needed) == {"saturdays", "weekends_and_holidays"}
     cached = client.get("/api/v1/forecast/levers?n_runs=100", headers=DIRECTOR).json()
     assert cached == body
-    denied = client.get("/api/v1/forecast/levers", headers={"X-Dev-Role": "maintenance"})
+    denied = client.get("/api/v1/forecast/levers", headers=bearer("maintenance"))
     assert denied.status_code == 403
 
 
@@ -192,6 +193,4 @@ def test_effect_endpoint(client: TestClient) -> None:
         "/api/v1/effect", json={"n_runs": 300, "assumptions": {"revenue": 1}}, headers=DIRECTOR
     )
     assert bad.status_code == 422
-    assert (
-        client.post("/api/v1/effect", json={}, headers={"X-Dev-Role": "quality"}).status_code == 403
-    )
+    assert client.post("/api/v1/effect", json={}, headers=bearer("quality")).status_code == 403

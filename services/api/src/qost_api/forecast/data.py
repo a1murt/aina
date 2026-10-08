@@ -21,11 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from qost_api.audit import audit
 from qost_api.auth import Principal
+from qost_api.queries.plan import mtd_output
 from twin_core.clock import ensure_utc
 from twin_core.config import TwinConfig
 from twin_core.db import CalibrationSnapshot, ForecastRun, ProductionPlan
 from twin_core.domain import EquipmentState
-from twin_core.events import FINISHED_RESULTS, FIRST_EXIT_RESULTS
+from twin_core.events import FIRST_EXIT_RESULTS
 from twin_core.forecast.calibration import (
     WIP_LOOKBACK,
     CalibrationInputs,
@@ -33,7 +34,6 @@ from twin_core.forecast.calibration import (
     Stop,
     UnitExit,
     held_from_exits,
-    month_bounds,
     targets_from_config,
 )
 from twin_core.forecast.params import CalibrationParams, KitLot, OpenDown, PlantState, Targets
@@ -165,13 +165,6 @@ _EXITS_SQL = text(
     JOIN s ON u.ts >= s.s_start AND u.ts < s.s_end
     WHERE u.line = ANY(:lines) AND u.result = ANY(:results) AND u.ts >= :w0 AND u.ts < :w1
     GROUP BY u.line, s.idx, u.product, u.result, u.defect_code
-    """
-)
-
-_MTD_SQL = text(
-    """
-    SELECT COUNT(*) FROM unit_event
-    WHERE line = :line AND result = ANY(:results) AND ts >= :m0 AND ts < :as_of
     """
 )
 
@@ -342,22 +335,8 @@ async def load_plant_state(
     session: AsyncSession, cfg: TwinConfig, *, as_of: datetime
 ) -> PlantState:
     now = ensure_utc(as_of)
-    local = now.astimezone(cfg.timezone)
-    m0, _ = month_bounds(cfg, f"{local.year:04d}-{local.month:02d}")
     warnings: list[str] = []
-    mtd = int(
-        (
-            await session.execute(
-                _MTD_SQL,
-                {
-                    "line": cfg.flow_lines[-1],
-                    "results": sorted(FINISHED_RESULTS),
-                    "m0": m0,
-                    "as_of": now,
-                },
-            )
-        ).scalar_one()
-    )
+    mtd = await mtd_output(session, cfg, as_of=now)
     buffers = {
         r.buffer: float(r.level)
         for r in await session.execute(_BUFFERS_SQL, {"codes": list(cfg.buffers), "as_of": now})

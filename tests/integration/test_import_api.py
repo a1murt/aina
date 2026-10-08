@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from api_support import bearer
 from qost_api.app import create_app
 from support import CASE_CSVS, CASE_DOCX, CASE_XLSX, REPO_ROOT, golden_differences
 from twin_core.clock import ManualClock
@@ -32,7 +33,7 @@ BASE_URL = make_url(
     os.environ.get("TEST_DATABASE_URL", "postgresql+asyncpg://qost:qost@localhost:5432/qost")
 )
 NOW = datetime(2026, 10, 6, 9, 0, tzinfo=UTC)
-DIRECTOR = {"X-Dev-Role": "director", "X-Dev-User": "it-director"}
+DIRECTOR = bearer("director", username="it-director")
 DATA_TABLES = (
     "audit_log",
     "alert",
@@ -251,7 +252,7 @@ def test_bad_upload_is_a_problem_and_writes_nothing(client: TestClient, db_url: 
 
 
 def test_roles_and_missing_imports(client: TestClient) -> None:
-    assert post(client, CASE_DOCX, headers={"X-Dev-Role": "operator"}).status_code == 403
-    response = client.get("/api/v1/import/999", headers={"X-Dev-Role": "admin"})
+    assert post(client, CASE_DOCX, headers=bearer("operator")).status_code == 403
+    response = client.get("/api/v1/import/999", headers=bearer("admin"))
     assert response.status_code == 404
     assert response.json()["type"] == "/problems/not-found"
