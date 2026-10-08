@@ -457,3 +457,135 @@ export interface SimScenario {
   at_min: number | null;
   inject: Record<string, unknown>;
 }
+
+// ------------------------------------------------------------------ PdM, work orders (M7b)
+
+export interface LimitForecast {
+  signal: string;
+  signal_name_ru: string;
+  unit: string;
+  limit: number;
+  level_now: number;
+  slope_per_h: number;
+  hours_to_limit: number | null;
+  limit_at: string | null;
+  window: string | null;
+  saving_min: number;
+  saving_cars: number;
+  alert?: boolean;
+  text_ru?: string | null;
+}
+export interface PredictionView {
+  ts: string;
+  equipment: string;
+  equipment_name_ru: string | null;
+  type: string | null;
+  line: string | null;
+  horizon_h: number;
+  p_failure: number;
+  health_index: number | null;
+  model_version: string;
+  factors: string[];
+}
+export interface HealthFull extends Omit<HealthView, "prediction"> {
+  area: string;
+  prediction: (Omit<PredictionView, "equipment" | "equipment_name_ru" | "type" | "line">) | null;
+  limits: LimitForecast[];
+}
+export type WorkOrderStatus = "open" | "in_progress" | "done" | "cancelled";
+export interface WorkOrderView {
+  id: number;
+  equipment: string;
+  equipment_name_ru: string | null;
+  line: string | null;
+  alert_id: number | null;
+  alert_rule: string | null;
+  kind: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: WorkOrderStatus;
+  title: string;
+  description: string | null;
+  assignee: string | null;
+  created_by: string | null;
+  created_ts: string;
+  due_ts: string | null;
+  closed_ts: string | null;
+  overdue: boolean;
+}
+
+// ------------------------------------------------------------------ quality (M7b)
+
+export interface SpcPoint {
+  key: string;
+  date: string;
+  shift: string;
+  n: number;
+  defects: number;
+  p: number;
+  ucl: number;
+  lcl: number;
+  z: number;
+  in_baseline: boolean;
+  special_cause: boolean;
+  rules: number[] | string[];
+}
+export interface SpcArea {
+  area: string;
+  name_ru: string;
+  p_bar: number | null;
+  norm: number;
+  in_control: boolean;
+  points: SpcPoint[];
+  violations: Array<{ rule: number | string; side: string; keys: string[]; end_key: string; text_ru: string }>;
+}
+export interface SpcView {
+  from: string;
+  to: string;
+  areas: SpcArea[];
+}
+export interface ParetoView {
+  total: number;
+  items: Array<{ defect_code: string; qty: number; area: string; share: number; cumulative: number; name_ru: string | null }>;
+  vital_few: string[];
+  by_area: Array<{ area: string; name_ru: string; qty: number }>;
+}
+export interface CorrelationItem {
+  factor: string;
+  name_ru: string;
+  unit: string;
+  rho: number;
+  p_value: number | null;
+  n: number;
+  insight: boolean;
+  direction: string;
+  text_ru: string | null;
+}
+export interface CorrelationsView {
+  area: string;
+  hours: number;
+  insights: CorrelationItem[];
+}
+
+// ------------------------------------------------------------------ copilot (M8b)
+
+export interface CopilotToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+  ok: boolean;
+  error?: string | null;
+  ms?: number;
+}
+export interface CopilotAnswer {
+  id: number | null;
+  ts: string;
+  answer: string;
+  lang: string;
+  mode: string;
+  model: string | null;
+  refused: boolean;
+  tool_calls: CopilotToolCall[];
+  tool_limit: number;
+  basis: { periods: Array<Record<string, string>>; entities: string[]; tools: string[] };
+  fallback_reason: string | null;
+  duration_ms: number;
+}

@@ -189,3 +189,20 @@ table {
 [data-tv="1"] {
   font-size: 1.125rem;
 }
+
+/* Print (shift reports): no app chrome, black on white, no shadows. */
+@media print {
+  header.sticky,
+  nextjs-portal {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  section {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+}
