@@ -56,8 +56,9 @@ export const SCREENS = [
   { href: "/director", key: "director", roles: ["director", "admin"] },
   { href: "/live", key: "live", roles: ["director", "master", "maintenance", "quality", "admin"] },
   { href: "/operator", key: "operator", roles: ["operator", "master", "admin"] },
-  { href: "/maintenance", key: "maintenance", roles: ["maintenance", "admin"] },
-  { href: "/quality", key: "quality", roles: ["quality", "admin"] },
+  { href: "/maintenance", key: "maintenance", roles: ["maintenance", "director", "master", "admin"] },
+  { href: "/quality", key: "quality", roles: ["quality", "director", "master", "admin"] },
+  { href: "/reports", key: "reports", roles: ["master", "director", "admin"] },
   { href: "/import", key: "import", roles: ["director", "admin"] },
   { href: "/demo", key: "demo", roles: ["admin"] },
 ] as const satisfies ReadonlyArray<{ href: string; key: string; roles: readonly Role[] }>;
