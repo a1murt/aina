@@ -80,7 +80,7 @@ services:
     build:
       <<: *python-build
       args: { PACKAGE: qost-sim }
-    image: qost/sim:dev
+    image: qost/sim:${IMAGE_TAG:-dev}
     command: ["python", "-m", "qost_sim"]
     ports:
       - "4840:4840"   # OPC UA
@@ -96,7 +96,7 @@ services:
     build:
       <<: *python-build
       args: { PACKAGE: qost-collector }
-    image: qost/collector:dev
+    image: qost/collector:${IMAGE_TAG:-dev}
     command: ["python", "-m", "qost_collector"]
     environment:
       <<: *python-env
@@ -121,7 +121,7 @@ services:
     build:
       <<: *python-build
       args: { PACKAGE: qost-engine }
-    image: qost/engine:dev
+    image: qost/engine:${IMAGE_TAG:-dev}
     command: ["python", "-m", "qost_engine"]
     volumes:
       - ./config:/app/config:ro
@@ -138,7 +138,7 @@ services:
     build:
       <<: *python-build
       args: { PACKAGE: qost-api }
-    image: qost/api:dev
+    image: qost/api:${IMAGE_TAG:-dev}
     command: ["python", "-m", "qost_api"]
     ports:
       - "8000:8000"
@@ -155,7 +155,7 @@ services:
     build:
       <<: *python-build
       args: { PACKAGE: qost-notifier }
-    image: qost/notifier:dev
+    image: qost/notifier:${IMAGE_TAG:-dev}
     command: ["python", "-m", "qost_notifier"]
     environment:
       <<: *python-env
@@ -168,7 +168,9 @@ services:
     profiles: ["demo", "prod"]
     build:
       context: web
-    image: qost/web:dev
+      args:
+        API_URL: http://api:8000   # /api and /ws proxied to the api service (same origin)
+    image: qost/web:${IMAGE_TAG:-dev}
     env_file:
       - path: .env
         required: false
