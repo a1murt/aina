@@ -1,4 +1,4 @@
-# Qost Twin — one host, one command (SPEC §4.5, NFR-08).
+# Aina — one host, one command (SPEC §4.5, NFR-08).
 #   make up                 infrastructure only: timescaledb, redis, mqtt (no profile)
 #   make up PROFILE=demo    + every service including the virtual plant (sim)
 #   make up PROFILE=prod    + every service except sim (collector reads config/tag_map.yaml)

@@ -30,7 +30,7 @@ class ResetBody(BaseModel):
 
 def create_app(runner: LiveRunner) -> FastAPI:
     app = FastAPI(
-        title="Qost Twin virtual plant console",
+        title="Aina virtual plant console",
         version="1.0",
         docs_url=None,
         redoc_url=None,

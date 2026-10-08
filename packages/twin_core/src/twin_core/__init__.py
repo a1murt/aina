@@ -1,4 +1,4 @@
-"""Qost Twin shared core library.
+"""Aina shared core library.
 
 Sub-modules:
     twin_core.config    pydantic models + loader for config/*.yaml (FR-DOM-01/02)

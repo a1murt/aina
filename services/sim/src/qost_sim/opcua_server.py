@@ -72,7 +72,7 @@ class OpcUaServer:
         endpoint: str,
         namespace_uri: str,
         state_codes: Mapping[EquipmentState, int],
-        server_name: str = "Qost Twin virtual plant",
+        server_name: str = "Aina virtual plant",
     ) -> None:
         self.space = space
         self.endpoint = endpoint

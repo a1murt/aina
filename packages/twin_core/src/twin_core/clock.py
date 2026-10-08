@@ -1,4 +1,4 @@
-"""The only source of "now" in Qost Twin (SPEC §5.2, NFR-11).
+"""The only source of "now" in Aina (SPEC §5.2, NFR-11).
 
 Business logic never calls ``datetime.now()`` / ``time.time()``; it receives a :class:`Clock`.
 

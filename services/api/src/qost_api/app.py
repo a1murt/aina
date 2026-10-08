@@ -36,7 +36,7 @@ from twin_core.health import load_config_or_exit
 SERVICE = "api"
 _UNSET: Any = object()
 
-DESCRIPTION = """Qost Twin — REST + WebSocket API (SPEC §12).
+DESCRIPTION = """Aina — REST + WebSocket API (SPEC §12).
 
 Log in with `POST /api/v1/auth/login` and send `Authorization: Bearer <token>`; the WebSocket
 is `/ws/live?token=<token>`. Errors are RFC 7807 problems; time is ISO 8601 UTC; lists page with
@@ -148,7 +148,7 @@ def create_app(
                     await engine.dispose()
 
     app = FastAPI(
-        title="Qost Twin API",
+        title="Aina API",
         version=__version__,
         description=DESCRIPTION,
         lifespan=lifespan,

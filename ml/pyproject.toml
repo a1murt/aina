@@ -1,7 +1,7 @@
 [project]
 name = "qost-ml"
 version = "0.1.0"
-description = "Qost Twin ML: PdM dataset, training, evaluation"
+description = "Aina ML: PdM dataset, training, evaluation"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "lightgbm>=4.5",

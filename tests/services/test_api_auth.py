@@ -85,7 +85,7 @@ def test_login_issues_a_token_with_role_lang_and_lines(client: TestClient) -> No
         "lines": ["ASSY-1"],
     }
     claims = jwt.decode(
-        body["access_token"], signing_key(ApiSettings()), algorithms=["HS256"], issuer="qost-twin"
+        body["access_token"], signing_key(ApiSettings()), algorithms=["HS256"], issuer="aina"
     )
     assert claims["role"] == "operator"
     assert claims["lines"] == ["ASSY-1"]
@@ -142,7 +142,7 @@ def test_expired_token_is_401(client: TestClient) -> None:
 
 def test_foreign_signature_is_401(client: TestClient) -> None:
     forged = jwt.encode(
-        {"sub": "1", "usr": "x", "role": "admin", "iat": 1, "exp": 2**31, "iss": "qost-twin"},
+        {"sub": "1", "usr": "x", "role": "admin", "iat": 1, "exp": 2**31, "iss": "aina"},
         b"another-secret-of-thirty-two-bytes!!",
         algorithm="HS256",
     )

@@ -1,7 +1,7 @@
 [project]
 name = "qost-api"
 version = "0.1.0"
-description = "Qost Twin REST + WebSocket API"
+description = "Aina REST + WebSocket API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "twin-core",

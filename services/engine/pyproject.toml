@@ -1,7 +1,7 @@
 [project]
 name = "qost-engine"
 version = "0.1.0"
-description = "Qost Twin stream engine (states, downtime, KPI, rules)"
+description = "Aina stream engine (states, downtime, KPI, rules)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "twin-core",

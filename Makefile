@@ -1,4 +1,4 @@
-# Qost Twin — developer commands (SPEC §18).
+# Aina — developer commands (SPEC §18).
 # Compatible with GNU make 3.81 (macOS default).
 
 SHELL := /bin/bash

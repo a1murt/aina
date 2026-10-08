@@ -32,7 +32,7 @@ from twin_core.clock import system_now
 from twin_core.config import TwinConfig
 
 ALGORITHM = "HS256"
-ISSUER = "qost-twin"
+ISSUER = "aina"
 ROLES_ATTR = "qost_roles"
 """Attribute of a role dependency: a frozenset of roles, ``"*"`` (any role) or a callable
 ``TwinConfig -> Iterable[str]``."""
@@ -81,7 +81,7 @@ def needs_rehash(password_hash: str) -> bool:
         return True
 
 
-_DUMMY_HASH = _hasher.hash("qost-twin-timing-equaliser")
+_DUMMY_HASH = _hasher.hash("aina-timing-equaliser")
 
 
 def burn_verify(password: str) -> None:

@@ -1,7 +1,7 @@
 [project]
 name = "qost-notifier"
 version = "0.1.0"
-description = "Qost Twin Telegram notifier"
+description = "Aina Telegram notifier"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "aiogram>=3.31,<4",
