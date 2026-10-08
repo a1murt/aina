@@ -5,3 +5,11 @@ out
 next-env.d.ts
 Dockerfile
 .dockerignore
+e2e
+playwright-report
+test-results
+playwright.config.ts
+*.mjs
+!scripts/*.mjs
+!eslint.config.mjs
+!postcss.config.mjs
