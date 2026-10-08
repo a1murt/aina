@@ -15,9 +15,12 @@ ENV UV_COMPILE_BYTECODE=1 \
     PLANT_CONFIG_DIR=/app/config
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
-RUN useradd --create-home --uid 10001 app \
-    && mkdir -p /var/lib/qost/spool /app/ml/models /app/config \
-    && chown -R app /var/lib/qost /app/ml/models
+# libgomp1: the OpenMP runtime LightGBM needs (qost-ml, used by the engine's PdM serving)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 app \
+    && mkdir -p /var/lib/qost/spool /app/config \
+    && chown -R app /var/lib/qost
 
 # 1) Third-party dependencies: cached while the lockfile and manifests do not change.
 COPY pyproject.toml uv.lock ./
@@ -35,6 +38,10 @@ RUN uv sync --frozen --no-dev --no-install-workspace --package "${PACKAGE}" \
 COPY packages packages
 COPY services services
 COPY ml/src ml/src
+# The committed models and the feature texts are part of the image (no volume on top of them):
+# the engine serves them offline, the same files the tests check.
+COPY ml/models ml/models
+COPY ml/feature_catalog.yaml ml/feature_catalog.yaml
 RUN uv sync --frozen --no-dev --package "${PACKAGE}" && rm -rf /root/.cache/uv
 
 USER app

@@ -75,7 +75,7 @@ def test_simulation_sections(cfg: TwinConfig) -> None:
     assert (s1.equipment, s1.reason) == ("CONV-03", "ME-CHAIN")
     s2 = cfg.scenarios["S2-FILTER-TREND"].inject
     assert isinstance(s2, SetStateInject)
-    assert s2.values == {"filter_dp_pa": 370.0}
+    assert s2.values == {"filter_dp_pa": 380.0}
     assert sim.ml_dataset.from_.isoformat() == "2025-10-01T00:00:00+05:00"
     assert sim.clock.demo_start.isoformat() == "2026-10-16T07:00:00+05:00"
 

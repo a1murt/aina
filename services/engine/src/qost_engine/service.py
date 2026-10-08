@@ -28,6 +28,7 @@ from redis.asyncio import Redis
 
 from qost_engine.core import EngineCore, LiveMsg
 from qost_engine.core.effects import AlertEscalate, AlertUpsert, Effect
+from qost_engine.pdm import PdmCache, PdmFeed, PdmServing
 from qost_engine.replay import BASELINE, event_from_row
 from qost_engine.settings import EngineSettings
 from qost_engine.writer import Checkpoint, EngineWriter, delete_derived, delete_facts
@@ -123,6 +124,7 @@ class EngineService:
         clock: Clock,
         redis: Redis,
         writer: EngineWriter | None = None,
+        serving: PdmServing | None = None,
     ) -> None:
         self.cfg = cfg
         self.settings = settings
@@ -149,6 +151,12 @@ class EngineService:
         self.skipped = 0
         self.last_commit_wall = 0.0
         self._live_buffer: list[LiveMsg] = []
+        self.serving: PdmServing | None = serving
+        self.pdm_cache = PdmCache()
+        self.pdm_feed: PdmFeed | None = None
+        self.pdm_ticks = 0
+        self.pdm_errors = 0
+        self._pdm_retry_wall = 0.0
 
     def _new_core(self, state: dict[str, Any] | None = None) -> EngineCore:
         kwargs: dict[str, Any] = {
@@ -170,8 +178,20 @@ class EngineService:
             log.info("restored", stream_id=cp.stream_id, event_ts=str(cp.event_ts))
         await self._ensure_group()
         await self._recover_gap(cp)
+        await self._start_pdm()
         await self._rebuild_live("restart")
         self.ready = True
+
+    async def _start_pdm(self) -> None:
+        """Load the models (``qost_ml``: LightGBM + SHAP, a few seconds) in a thread."""
+        if self.serving is None and self.settings.engine_pdm:
+            try:
+                self.serving = await asyncio.to_thread(PdmServing.load, self.cfg)
+            except Exception as exc:  # the engine must run without ML (e.g. a lean image)
+                log.warning("pdm_disabled", error=str(exc)[:300])
+        if self.serving is not None:
+            self.pdm_feed = self.serving.feed(self.writer.pool)
+            log.info("pdm_ready", units=len(self.serving.spec.equipment))
 
     async def _retry(self, fn: Any) -> Any:
         delay = 0.5
@@ -359,6 +379,56 @@ class EngineService:
             self._live_buffer.extend(live)
             await self._flush_live()
 
+    async def pdm(self) -> None:
+        """PdM tick every ``pdm_tick_min`` plant minutes (SPEC §11.1): refresh the cache from
+        the database, evaluate in a thread, apply to the core."""
+        while not self.stopping.is_set():
+            await asyncio.sleep(0.5)
+            if self.paused or not self.ready or self.serving is None or self.pdm_feed is None:
+                continue
+            now = self._now()
+            if now is None or time.monotonic() < self._pdm_retry_wall:
+                continue
+            slot = self.core.pdm_slot(now, self.settings.engine_pdm_settle_s)
+            if slot is None:
+                continue
+            epoch, core = self.epoch, self.core
+            asof = slot + timedelta(seconds=self.settings.engine_pdm_settle_s)
+            try:
+                await self.pdm_feed.refresh(self.pdm_cache, asof)
+                tick = await asyncio.to_thread(
+                    self.serving.evaluate, self.pdm_cache, slot, None, asof
+                )
+            except Exception as exc:
+                self.pdm_errors += 1
+                self._pdm_retry_wall = time.monotonic() + self.settings.engine_pdm_retry_s
+                self.pdm_cache.clear()
+                log.warning("pdm_tick_failed", error=str(exc)[:300])
+                continue
+            if self.paused or self.epoch != epoch or self.core is not core:
+                continue  # a demo reset happened meanwhile
+            core.apply_pdm(tick)
+            log.info(
+                "pdm_tick",
+                slot=slot.isoformat(),
+                units=len(tick.units),
+                limits=[
+                    (
+                        i.equipment,
+                        i.signal,
+                        i.hours_to_limit and round(i.hours_to_limit, 1),
+                        i.n_points,
+                    )
+                    for i in tick.limits
+                    if i.alert
+                ],
+            )
+            effects, live = core.drain()
+            self.pending.extend(effects)
+            self._live_buffer.extend(live)
+            self.pdm_ticks += 1
+            await self._flush_live()
+
     async def committer(self) -> None:
         while not self.stopping.is_set():
             await asyncio.sleep(self.settings.engine_commit_ms / 1000.0)
@@ -429,6 +499,11 @@ class EngineService:
             "engine_ts": self.last_event_ts.isoformat() if self.last_event_ts else None,
             "stream_id": self.checkpoint_id,
             "epoch": self.epoch,
+            "pdm": {
+                "enabled": self.serving is not None,
+                "ticks": self.pdm_ticks,
+                "errors": self.pdm_errors,
+            },
             **self.core.stats,
         }
         with contextlib.suppress(Exception):
@@ -496,6 +571,7 @@ class EngineService:
                 raw_state = row["state"]
                 state = json.loads(raw_state) if isinstance(raw_state, str) else raw_state
             self.core = self._new_core(state)
+            self.pdm_cache.clear()
             await self.redis.xtrim(self.settings.events_stream, maxlen=0, approximate=False)
             with contextlib.suppress(Exception):
                 await self.redis.xgroup_setid(
@@ -549,6 +625,7 @@ class EngineService:
             asyncio.create_task(self.timers(), name="timers"),
             asyncio.create_task(self.committer(), name="commit"),
             asyncio.create_task(self.control(), name="control"),
+            asyncio.create_task(self.pdm(), name="pdm"),
         ]
         try:
             await self.stopping.wait()

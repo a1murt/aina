@@ -28,9 +28,11 @@ from qost_engine.core.effects import (
     Effect,
     KpiShiftRow,
     LiveMsg,
+    PredictionRow,
     ReclassifyRequest,
     StateInterval,
 )
+from qost_engine.core.pdm import PdmTick
 from qost_engine.core.state import (
     BufferSt,
     Cond,
@@ -41,6 +43,7 @@ from qost_engine.core.state import (
     Point,
     ShiftAcc,
     Span,
+    SpcPoint,
     Stop,
 )
 from twin_core.alert_text import alert_message_ru, alert_title_ru
@@ -80,11 +83,14 @@ from twin_core.kpi import (
 )
 from twin_core.rules import (
     AL_DOWNTIME_LIMIT,
+    AL_LIMIT,
     AL_OEE_BELOW,
     AL_OEE_NEAR,
+    AL_PDM,
     Alert,
     AlertEvaluator,
 )
+from twin_core.spc import Subgroup, p_chart
 from twin_core.states import UnitCondition, derive_line_state
 
 log = structlog.get_logger("qost_engine.core")
@@ -919,6 +925,8 @@ class EngineCore:
                 )
         areas = self._area_kpis(kpis)
         area_rates = {area: k.defect_rate for area, k in areas.items()}
+        if not acc.partial:
+            self._spc(acc, areas, t, first=first)
         if not first:
             self.effects.append(
                 AuditRow(
@@ -1078,6 +1086,201 @@ class EngineCore:
             )
             if alert is not None:
                 self._raise(alert, t, resolve=history)
+
+    # ================================================================== SPC (AL-Q2, §11.3)
+
+    def _spc(self, acc: ShiftAcc, areas: Mapping[str, ShiftKpi], t: float, *, first: bool) -> None:
+        """Add the closed shift to each area's p-chart; a Western Electric pattern completed by
+        the newest point raises AL-Q2 (replay of history writes it as resolved)."""
+        day = date.fromisoformat(acc.date)
+        history = self.mode == "replay" and self.resolve_history_alerts
+        keep = self.params.spc_history_shifts
+        for area, kpi in areas.items():
+            if kpi.pq <= 0:
+                continue
+            points = self.st.spc.setdefault(area, [])
+            point = SpcPoint(acc.key, kpi.pq - kpi.gq, kpi.pq)
+            for i, old in enumerate(points):
+                if old.key == acc.key:
+                    point.special = old.special
+                    points[i] = point
+                    break
+            else:
+                points.append(point)
+            del points[:-keep]
+            if not first or points[-1].key != acc.key:
+                continue
+            chart = p_chart([Subgroup(p.key, p.defects, p.n, p.special) for p in points])
+            found = chart.latest_violations
+            if chart.p_bar is None or not found:
+                continue
+            last = chart.points[-1]
+            value = {
+                "rules": sorted({v.rule for v in found}),
+                "side": found[0].side,
+                "p": round(last.p, 4),
+                "p_bar": round(chart.p_bar, 4),
+                "ucl": round(last.ucl, 4),
+                "lcl": round(last.lcl, 4),
+                "z": round(last.z, 2),
+                "n": last.n,
+                "defects": last.defects,
+                "key": acc.key,
+            }
+            alert = self.evaluator.spc_violation(
+                area=area, period_date=day, shift=acc.code, value=value
+            )
+            if alert is not None:
+                self._raise(alert, t, resolve=history)
+
+    # ================================================================== PdM serving (M7b)
+
+    def pdm_slot(self, now: datetime, settle_s: float = 0.0) -> datetime | None:
+        """Plant time of the PdM tick due at ``now`` (every ``pdm_tick_min`` plant minutes,
+        aligned to the epoch, ``settle_s`` after the slot); ``None`` if already served."""
+        step = self.params.pdm_tick_min * 60.0
+        t = to_sec(now)
+        slot = math.floor((t - settle_s) / step) * step
+        if self.st.pdm_last is None:
+            # a fresh start serves the slot that is current now, not the history before it
+            self.st.pdm_last = math.floor(t / step) * step - step
+        last = self.st.pdm_last
+        if last is not None and slot <= last:
+            return None
+        return to_dt(slot)
+
+    def apply_pdm(self, tick: PdmTick) -> None:
+        """Store a PdM tick: ``prediction`` rows, live health, AL-M1 (``p_failure`` thresholds)
+        and AL-M2 (a signal reaches its limit within the look-ahead). Units that are down are
+        not predicted; their open AL-M1/AL-M2 end (the failure happened or the service started)."""
+        t = to_sec(tick.ts)
+        self.st.pdm_last = max(self.st.pdm_last or t, t)
+        now = max(t, self.st.watermark or t)
+        self._pdm_close_for_down_units(now)
+        day = self.calendar.local_date(tick.ts)
+        thr = self.t
+        for unit in tick.units:
+            ent = self.st.entities.get(unit.equipment)
+            if ent is None or ent.state in DOWN:
+                continue
+            self.effects.append(
+                PredictionRow(
+                    unit.equipment,
+                    tick.ts,
+                    unit.horizon_h,
+                    round(unit.p_failure, 4),
+                    round(unit.health_index, 1),
+                    unit.model_version,
+                    [dict(f) for f in unit.factors],
+                )
+            )
+            self.st.health[unit.equipment] = {
+                "health_index": round(unit.health_index, 1),
+                "p_failure": round(unit.p_failure, 4),
+                "ts": t,
+            }
+            if ent.state is not None:
+                self._state_msg(ent, now)
+            existing = self._open_for(AL_PDM, unit.equipment)
+            if unit.p_failure >= thr.pdm_warn_p:
+                value = {
+                    "p_failure": round(unit.p_failure, 3),
+                    "health_index": round(unit.health_index, 1),
+                    "horizon_h": unit.horizon_h,
+                    "model_version": unit.model_version,
+                    "source": unit.source,
+                    "factors_ru": [str(f.get("text_ru", "")) for f in unit.factors],
+                    "factors_kk": [str(f.get("text_kk", "")) for f in unit.factors],
+                }
+                started = existing.period_key if existing and existing.period_key else iso(t)
+                alert = self.evaluator.pdm_failure(
+                    equipment=unit.equipment,
+                    period_date=day,
+                    started_key=started,
+                    p_failure=unit.p_failure,
+                    value=value,
+                )
+                if alert is not None and (
+                    existing is None
+                    or existing.severity != alert.severity
+                    or abs(_value_p(existing.value) - unit.p_failure) >= 0.05
+                ):
+                    self._raise(alert, now)
+            elif existing is not None and unit.p_failure < (
+                self.params.pdm_resolve_ratio * thr.pdm_warn_p
+            ):
+                self._resolve(existing.key, now)
+        for item in tick.limits:
+            self._apply_limit(item, tick, day, t, now)
+
+    def _apply_limit(self, item: Any, tick: PdmTick, day: date, t: float, now: float) -> None:
+        ent = self.st.entities.get(item.equipment)
+        if ent is None or ent.state in DOWN:
+            return
+        existing = self._open_for(AL_LIMIT, item.equipment, item.signal)
+        if item.alert and item.hours_to_limit is not None:
+            value = {
+                "signal": item.signal,
+                "signal_name_ru": item.signal_name_ru,
+                "unit": item.unit,
+                "limit": item.limit,
+                "level_now": round(item.level_now, 2),
+                "slope_per_h": round(item.slope_per_h, 3),
+                "hours_to_limit": round(item.hours_to_limit, 1),
+                "limit_at": item.limit_at.isoformat() if item.limit_at else None,
+                "window": item.window.isoformat() if item.window else None,
+                "saving_min": round(item.saving_min, 1),
+                "saving_cars": round(item.saving_cars, 1),
+            }
+            if existing is not None and isinstance(existing.value, dict):
+                prev = existing.value
+                same_window = prev.get("window") == value["window"]
+                near = abs(float(prev.get("hours_to_limit", 0.0)) - item.hours_to_limit) < 0.5
+                if same_window and near:
+                    return
+            started = (
+                existing.period_key
+                if existing is not None and existing.period_key
+                else f"{iso(t)}/{item.signal}"
+            )
+            alert = self.evaluator.limit_reach(
+                equipment=item.equipment, period_date=day, started_key=started, value=value
+            )
+            if alert is not None:
+                self._raise(alert, now)
+        elif existing is not None and (
+            item.hours_to_limit is None
+            or item.hours_to_limit > tick.lookahead_h + self.params.pdm_lookahead_clear
+        ):
+            self._resolve(existing.key, now)
+
+    def _open_for(
+        self, rule_id: str, equipment: str, signal: str | None = None
+    ) -> OpenAlert | None:
+        for a in self.st.alerts.values():
+            if a.rule_id != rule_id or a.entity != equipment:
+                continue
+            if signal is not None and not (
+                isinstance(a.value, dict) and a.value.get("signal") == signal
+            ):
+                continue
+            return a
+        return None
+
+    def _pdm_close_for_down_units(self, t: float) -> None:
+        """AL-M1 / AL-M2 of a unit in planned service or in a real failure are over."""
+        for key, a in list(self.st.alerts.items()):
+            if a.rule_id not in (AL_PDM, AL_LIMIT):
+                continue
+            ent = self.st.entities.get(a.entity)
+            if ent is None:
+                continue
+            if ent.state == "DOWN_PLANNED":
+                self._resolve(key, t)
+            elif ent.state == "DOWN_UNPLANNED":
+                stop = self.st.stops.get(ent.stop or "")
+                if stop is not None and stop.duration(t) >= self.threshold_s:
+                    self._resolve(key, t)
 
     # ================================================================== alerts (§9.7)
 
@@ -1485,7 +1688,7 @@ class EngineCore:
                     "criticality": eq.criticality,
                     "alarm": ent.alarm,
                     "alarm_code": ent.alarm_code,
-                    "health_index": view.get("health_index"),
+                    "health_index": (self.st.health.get(ent.code) or {}).get("health_index"),
                     "downtime": self._stop_view(stop, t) if stop else None,
                 }
             )
@@ -1724,3 +1927,7 @@ def kpi_values(kpi: ShiftKpi) -> dict[str, Any]:
 
 
 __all__ = ["DOWN", "EngineCore", "Mode", "iso", "kpi_values", "line_shift_kpi", "to_dt", "to_sec"]
+
+
+def _value_p(value: object) -> float:
+    return float(value.get("p_failure", 0.0)) if isinstance(value, dict) else 0.0

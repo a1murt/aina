@@ -154,8 +154,8 @@ def test_telemetry_signal_must_exist_for_type(config_copy: Path) -> None:
 def test_set_state_value_must_be_signal_or_degradation(config_copy: Path) -> None:
     mutate(
         config_copy / "simulation.yaml",
-        "equipment: BOOTH-02, filter_dp_pa: 370",
-        "equipment: BOOTH-02, filter_dp: 370",
+        "equipment: BOOTH-02, filter_dp_pa: 380",
+        "equipment: BOOTH-02, filter_dp: 380",
     )
     issue = only(load_issues(config_copy))
     assert issue.path == "scenarios[S2-FILTER-TREND].inject.filter_dp"

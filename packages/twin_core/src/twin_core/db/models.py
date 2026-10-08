@@ -264,6 +264,7 @@ class CkdStock(Base):
 
 class Prediction(Base):
     __tablename__ = "prediction"
+    __table_args__ = (Index("ix_prediction_equipment_ts", "equipment", text("ts DESC")),)
 
     equipment: Mapped[str] = mapped_column(Text, primary_key=True)
     horizon_h: Mapped[float] = mapped_column(Double, primary_key=True)
@@ -551,6 +552,13 @@ class WorkOrder(Base):
     __table_args__ = (
         CheckConstraint(_in("kind", "corrective", "preventive", "predictive"), name="kind"),
         CheckConstraint(_in("status", "open", "in_progress", "done", "cancelled"), name="status"),
+        Index("ix_work_order_status_created_ts", "status", text("created_ts DESC")),
+        Index(
+            "uq_work_order_active_alert",
+            "alert_id",
+            unique=True,
+            postgresql_where=text("status IN ('open', 'in_progress')"),
+        ),
     )
 
     id: Mapped[int] = _pk_id()
@@ -620,3 +628,29 @@ class AuditLog(Base):
     entity_id: Mapped[str | None] = mapped_column(Text)
     before: Mapped[dict[str, Any] | None] = mapped_column(Json)
     after: Mapped[dict[str, Any] | None] = mapped_column(Json)
+
+
+class CopilotLog(Base):
+    """Copilot requests and answers (SPEC §11.5: kept for 30 days)."""
+
+    __tablename__ = "copilot_log"
+    __table_args__ = (
+        CheckConstraint(_in("mode", "llm", "offline"), name="mode"),
+        Index("ix_copilot_log_ts", text("ts DESC")),
+    )
+
+    id: Mapped[int] = _pk_id()
+    ts: Mapped[datetime] = mapped_column(Tz)
+    user_id: Mapped[int | None] = _user_fk()
+    username: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(Text)
+    lang: Mapped[str] = mapped_column(Text)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text)
+    mode: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    refused: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    tool_calls: Mapped[list[dict[str, Any]]] = mapped_column(Json)
+    error: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int] = mapped_column(Integer)
