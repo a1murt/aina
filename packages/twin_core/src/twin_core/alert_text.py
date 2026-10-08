@@ -17,13 +17,24 @@ from twin_core.rules import (
     AL_DEFECT_RATE,
     AL_DOWNTIME_LIMIT,
     AL_EQUIPMENT_STOP,
+    AL_LIMIT,
     AL_MATERIAL_CALL,
     AL_OEE_BELOW,
     AL_OEE_NEAR,
+    AL_PDM,
     AL_PLAN_RISK,
+    AL_SPC,
     AL_SYSTEMIC_DEFECTS,
     Alert,
 )
+
+SPC_RULES_RU = {
+    1: "точка за границей 3σ",
+    2: "2 из 3 подряд за границей 2σ с одной стороны",
+    3: "4 из 5 подряд за границей 1σ с одной стороны",
+    4: "8 подряд по одну сторону от центральной линии",
+}
+"""Western Electric rules (SPEC §11.3) in words."""
 
 
 def pct(value: float) -> str:
@@ -146,7 +157,84 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
         if value.get("comment"):
             text += f". «{value['comment']}»"
         return text + (f" [{who}]" if who else "")
+    if alert.rule_id == AL_PDM and isinstance(value, dict):
+        return pdm_text_ru(cfg, alert.entity, value)
+    if alert.rule_id == AL_LIMIT and isinstance(value, dict):
+        return limit_text_ru(cfg, alert.entity, value)
+    if alert.rule_id == AL_SPC and isinstance(value, dict):
+        return _spc_text(alert, value, cfg, when)
     return f"{alert_title_ru(alert, cfg)}: {alert.entity} ({when})"
 
 
-__all__ = ["alert_message_ru", "alert_title_ru", "day", "impact_text", "local_time", "num", "pct"]
+def pdm_text_ru(cfg: TwinConfig, equipment: str, value: dict[str, Any]) -> str:
+    """AL-M1 wording for a stored alert value."""
+    name = cfg.equipment[equipment].name_ru
+    p = float(value.get("p_failure", 0.0))
+    text = (
+        f"{name}: вероятность отказа в ближайшие {num(float(value.get('horizon_h', 0)), 0)} ч — "
+        f"{pct(p)}% (индекс здоровья {num(float(value.get('health_index', 0)), 0)})"
+    )
+    factors = [str(f) for f in value.get("factors_ru") or []]
+    if factors:
+        text += ". Причины: " + "; ".join(factors)
+    return text
+
+
+def limit_text_ru(cfg: TwinConfig, equipment: str, value: dict[str, Any]) -> str:
+    """AL-M2 wording for a stored alert value (also used by the health endpoint)."""
+    name = cfg.equipment[equipment].name_ru
+    signal = str(value.get("signal_name_ru") or value.get("signal"))
+    unit = str(value.get("unit") or "")
+    hours = value.get("hours_to_limit")
+    head = (
+        f"{name}: {signal[:1].lower() + signal[1:]} достигнет предела "
+        f"{num(float(value.get('limit', 0)))} {unit}".rstrip()
+    )
+    if hours is not None:
+        head += f" через ≈ {num(float(hours), 1)} ч"
+        if value.get("limit_at"):
+            head += f" (около {local_time(str(value['limit_at']), cfg)[-5:]})"
+    window = value.get("window")
+    if window:
+        filters = cfg.simulation.paint_filters
+        verb = (
+            "заменить фильтры"
+            if filters is not None and cfg.equipment[equipment].type == filters.equipment_type
+            else "обслужить"
+        )
+        tail = f"{verb} в пересменку {local_time(str(window), cfg)[-5:]}"
+    else:
+        tail = "обслужить сейчас — предел наступит раньше ближайшей пересменки"
+    saving = ""
+    if float(value.get("saving_min") or 0) > 0:
+        saving = (
+            f" — экономия ≈ {num(float(value['saving_min']), 0)} мин простоя"
+            f" (≈ {num(float(value.get('saving_cars') or 0), 1)} авто)"
+        )
+    return f"{head}. Рекомендация: {tail}{saving}"
+
+
+def _spc_text(alert: Alert, value: dict[str, Any], cfg: TwinConfig, when: str) -> str:
+    area = cfg.areas[alert.entity].name_ru
+    rules = [int(r) for r in value.get("rules") or []]
+    words = "; ".join(f"правило {r} — {SPC_RULES_RU.get(r, '')}" for r in rules)
+    side = "выше" if int(value.get("side", 1)) > 0 else "ниже"
+    return (
+        f"{area}: процесс вне статистического контроля ({when}): брак {pct(float(value['p']))}% "
+        f"при среднем {pct(float(value['p_bar']))}% ({side} центральной линии; "
+        f"верхняя граница {pct(float(value['ucl']))}%); {words}"
+    )
+
+
+__all__ = [
+    "SPC_RULES_RU",
+    "alert_message_ru",
+    "alert_title_ru",
+    "day",
+    "impact_text",
+    "limit_text_ru",
+    "local_time",
+    "num",
+    "pct",
+    "pdm_text_ru",
+]

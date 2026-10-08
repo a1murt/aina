@@ -10,6 +10,7 @@ from qost_engine.core.effects import (
     Effect,
     KpiShiftRow,
     LiveMsg,
+    PredictionRow,
     ReclassifyRequest,
     StateInterval,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "EngineCore",
     "KpiShiftRow",
     "LiveMsg",
+    "PredictionRow",
     "ReclassifyRequest",
     "StateInterval",
 ]

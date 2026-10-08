@@ -20,6 +20,7 @@ from qost_engine.core.effects import (
     DqUpsert,
     Effect,
     KpiShiftRow,
+    PredictionRow,
     ReclassifyRequest,
     StateInterval,
 )
@@ -52,6 +53,14 @@ def coalesce(effects: Iterable[Effect]) -> list[Effect]:
     ]
 
 
+_PREDICTION = """
+INSERT INTO prediction (equipment, horizon_h, ts, p_failure, health_index, model_version,
+    top_factors)
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+ON CONFLICT (equipment, horizon_h, ts) DO UPDATE SET p_failure = EXCLUDED.p_failure,
+    health_index = EXCLUDED.health_index, model_version = EXCLUDED.model_version,
+    top_factors = EXCLUDED.top_factors
+"""
 _STATE = """
 INSERT INTO equipment_state (entity, start_ts, end_ts, entity_type, state, reason_code, source)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -342,6 +351,23 @@ async def apply_effects(
                 for e in audits
             ],
         )
+    predictions = [e for e in items if isinstance(e, PredictionRow)]
+    if predictions:
+        await conn.executemany(
+            _PREDICTION,
+            [
+                (
+                    e.equipment,
+                    e.horizon_h,
+                    e.ts,
+                    e.p_failure,
+                    e.health_index,
+                    e.model_version,
+                    _json(e.top_factors),
+                )
+                for e in predictions
+            ],
+        )
     reclassify = [e for e in items if isinstance(e, ReclassifyRequest)]
     if reclassify and cfg is not None:
         from qost_engine.recompute import reclassify_stored
@@ -440,6 +466,11 @@ async def delete_derived(
     await run(
         "dq_issue",
         "DELETE FROM dq_issue WHERE import_id IS NULL AND ts >= $1" + hi_cond.format(col="ts"),
+        *args,
+    )
+    await run(
+        "prediction",
+        "DELETE FROM prediction WHERE ts >= $1" + hi_cond.format(col="ts"),
         *args,
     )
     return counts

@@ -34,6 +34,44 @@ class Line:
         return self.intercept + self.slope * x
 
 
+def theil_sen_segmented(
+    x: Sequence[float] | FloatArray,
+    y: Sequence[float] | FloatArray,
+    segments: Sequence[int] | npt.NDArray[np.int64],
+    *,
+    min_level_points: int = 3,
+) -> Line | None:
+    """Theil–Sen slope from pairs *within* the same segment; level from the last segment.
+
+    A level shift (a replaced filter, a re-based sensor) moves the signal without changing its
+    drift: pairs across the shift would bias the slope, so only pairs inside a segment count, and
+    the intercept (the value at ``x = 0``) is the median of ``y - slope * x`` over the newest
+    segment alone. ``segments`` are non-decreasing ids per point. ``None`` without at least one
+    usable pair or with fewer than ``min_level_points`` points in the last segment.
+    """
+    xa = np.asarray(x, dtype=np.float64)
+    ya = np.asarray(y, dtype=np.float64)
+    sa = np.asarray(segments, dtype=np.int64)
+    if not (xa.shape == ya.shape == sa.shape) or xa.ndim != 1:
+        raise ValueError("x, y and segments must be 1-D of the same length")
+    keep = np.isfinite(xa) & np.isfinite(ya)
+    xa, ya, sa = xa[keep], ya[keep], sa[keep]
+    n = len(xa)
+    if n < 2:
+        return None
+    i, j = np.triu_indices(n, k=1)
+    dx = xa[j] - xa[i]
+    valid = (dx != 0) & (sa[i] == sa[j])
+    if not valid.any():
+        return None
+    slope = float(np.median((ya[j][valid] - ya[i][valid]) / dx[valid]))
+    last = sa == sa[-1]
+    if int(last.sum()) < min_level_points:
+        return None
+    intercept = float(np.median(ya[last] - slope * xa[last]))
+    return Line(slope=slope, intercept=intercept, n=n)
+
+
 @dataclass(frozen=True, slots=True)
 class RankCorrelation:
     rho: float

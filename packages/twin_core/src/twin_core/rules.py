@@ -31,6 +31,12 @@ AL_SYSTEMIC_DEFECTS: Final = "AL-Q3"
 AL_BUFFER: Final = "AL-B1"
 AL_CKD_COVERAGE: Final = "AL-L1"
 AL_PLAN_RISK: Final = "AL-P1"
+AL_PDM: Final = "AL-M1"
+"""Predicted failure of a unit within the horizon (engine PdM serving, M7b)."""
+AL_LIMIT: Final = "AL-M2"
+"""A signal will reach ``limit_hi`` within the look-ahead (engine, M7b)."""
+AL_SPC: Final = "AL-Q2"
+"""p-chart of an area violates a Western Electric rule (engine, M7b)."""
 AL_ANDON: Final = "AL-A1"
 """Operator andon call from the line terminal (raised by the api, M4)."""
 AL_MATERIAL_CALL: Final = "AL-A2"
@@ -326,3 +332,61 @@ class AlertEvaluator:
         if "p50" in summary:
             value["p50"] = float(summary["p50"])
         return Alert(AL_PLAN_RISK, severity, "site", PLANT_ENTITY, period_date, value)
+
+    # ------------------------------------------------------------------ analytics rules (M7b)
+
+    def pdm_failure(
+        self,
+        *,
+        equipment: str,
+        period_date: date,
+        started_key: str,
+        p_failure: float,
+        value: Mapping[str, Any],
+    ) -> Alert | None:
+        """AL-M1: p_failure(horizon) >= ``pdm_warn_p`` (warning) / >= ``pdm_crit_p`` (critical)."""
+        if not self.enabled(AL_PDM):
+            return None
+        t = self.thresholds
+        severity: Severity
+        if p_failure >= t.pdm_crit_p:
+            severity = "critical"
+        elif p_failure >= t.pdm_warn_p:
+            severity = "warning"
+        else:
+            return None
+        return Alert(
+            AL_PDM,
+            severity,
+            "equipment",
+            equipment,
+            period_date,
+            dict(value),
+            period_key=started_key,
+        )
+
+    def limit_reach(
+        self, *, equipment: str, period_date: date, started_key: str, value: Mapping[str, Any]
+    ) -> Alert | None:
+        """AL-M2: a signal reaches its limit within ``telemetry_limit_lookahead_h``."""
+        severity = self.fixed_severity(AL_LIMIT)
+        if severity is None:
+            return None
+        return Alert(
+            AL_LIMIT,
+            severity,
+            "equipment",
+            equipment,
+            period_date,
+            dict(value),
+            period_key=started_key,
+        )
+
+    def spc_violation(
+        self, *, area: str, period_date: date, shift: str | None, value: Mapping[str, Any]
+    ) -> Alert | None:
+        """AL-Q2: the newest point of an area's p-chart completes a Western Electric pattern."""
+        severity = self.fixed_severity(AL_SPC)
+        if severity is None:
+            return None
+        return Alert(AL_SPC, severity, "area", area, period_date, dict(value), shift)

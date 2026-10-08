@@ -142,7 +142,7 @@ scenarios:
     at_min: null
   - id: S2-FILTER-TREND
     name_ru: "Фильтры Камеры-02 близки к пределу"
-    inject: { type: set_state, equipment: BOOTH-02, filter_dp_pa: 370 }   # (450−370)/7 Па/ч ≈ 11.4 ч < lookahead 12 ч → AL-M2 сразу
+    inject: { type: set_state, equipment: BOOTH-02, filter_dp_pa: 380 }   # (450−380)/6.6 Па/ч ≈ 10.6 ч < lookahead 12 ч → AL-M2 сразу (реальная скорость этой жизни фильтра 6.6 Па/ч)
     at_min: 0
   - id: S3-ABB04-WEAR
     name_ru: "Износ робота ABB-04"

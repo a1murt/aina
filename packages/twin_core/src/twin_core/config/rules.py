@@ -115,6 +115,18 @@ class EngineParams(StrictModel):
     flow_wip_tolerance: NonNegativeInt = 2
     """DQ-04 live: residual units tolerated at shift boundaries — one body held by a blocked
     upstream line plus one in process in the downstream line."""
+    pdm_tick_min: PositiveFloat = 15.0
+    """SPEC §11.1: PdM serving (p_failure, health index, AL-M1/AL-M2) every N plant minutes."""
+    pdm_resolve_ratio: Annotated[float, Field(gt=0, le=1)] = 0.8
+    """AL-M1 resolves when p_failure falls below ``ratio x pdm_warn_p`` (hysteresis)."""
+    pdm_lookahead_clear: PositiveFloat = 1.0
+    """AL-M2 resolves when the time to the limit exceeds the look-ahead by this many hours."""
+    pdm_fresh_s: PositiveFloat = 150.0
+    """AL-M2 ignores a signal whose newest sample is older than this (stale data raises nothing)."""
+    pdm_stops_days: PositiveInt = 60
+    """Stop history given to the PdM features (hours since maintenance / repair, cycles)."""
+    spc_history_shifts: PositiveInt = 40
+    """Closed shifts per area kept for the p-chart (baseline is the last 20, SPEC §11.3)."""
 
 
 class RulesConfig(StrictModel):

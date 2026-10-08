@@ -13,7 +13,9 @@ from qost_api.routes import (
     alerts,
     assets,
     auth,
+    bodies,
     bottleneck,
+    copilot,
     data_quality,
     defects,
     downtime,
@@ -22,10 +24,13 @@ from qost_api.routes import (
     imports,
     kpi,
     live,
+    predictions,
+    quality,
     reports,
     service,
     sim,
     terminal,
+    work_orders,
 )
 
 ROUTERS: tuple[APIRouter, ...] = (
@@ -45,5 +50,10 @@ ROUTERS: tuple[APIRouter, ...] = (
     equipment.router,
     sim.router,
     reports.router,
+    copilot.router,
+    predictions.router,
+    work_orders.router,
+    quality.router,
+    bodies.router,
     ws.router,
 )

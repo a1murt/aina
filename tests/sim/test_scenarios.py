@@ -94,9 +94,9 @@ def test_s2_filter_reaches_its_limit_at_the_predicted_operating_hour(cfg: TwinCo
     model.schedule(model.sec(inject_at), scenario.inject)
     model.run_until(model.sec(inject_at) + 1)
     booth = model.units["BOOTH-02"]
-    assert booth.filter_dp() == pytest.approx(370, abs=0.1)
+    assert booth.filter_dp() == pytest.approx(380, abs=0.1)
     rate_h = booth.filter_rate_s * 3600
-    predicted_h = (pf.dp_limit_pa - 370) / rate_h
+    predicted_h = (pf.dp_limit_pa - 380) / rate_h
     model.run_until_time(inject_at + timedelta(days=3))
     recs = model.drain()
     t = model.sec(inject_at)
@@ -117,7 +117,7 @@ def test_s2_filter_reaches_its_limit_at_the_predicted_operating_hour(cfg: TwinCo
     assert operating / 3600 == pytest.approx(predicted_h, abs=0.01)
     samples = [r for r in of(recs, "telemetry", "BOOTH-02") if r.data["signal"] == pf.signal]
     after = [r.data["value"] for r in samples if r.t > t]
-    assert after[0] == pytest.approx(370, abs=20)
+    assert after[0] == pytest.approx(380, abs=20)
     before_rep = [r.data["value"] for r in samples if t < r.t < t_rep]
     assert max(before_rep) > pf.dp_limit_pa - 25
 
@@ -292,7 +292,7 @@ def test_at_min_scenarios_are_applied_at_demo_start(cfg: TwinConfig) -> None:
     assert set(scheduled) == expected == {"S2-FILTER-TREND", "S3-ABB04-WEAR"}
     assert all(t == pytest.approx(demo_s) for t in scheduled.values())
     model.run_until(model.env.now + 1)
-    assert model.units["BOOTH-02"].filter_dp() == pytest.approx(370, abs=0.5)
+    assert model.units["BOOTH-02"].filter_dp() == pytest.approx(380, abs=0.5)
     assert model.units["ABB-04"].d == pytest.approx(0.75)
 
 

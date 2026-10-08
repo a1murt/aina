@@ -1278,11 +1278,15 @@ name = "qost-engine"
 version = "0.1.0"
 source = { editable = "services/engine" }
 dependencies = [
+    { name = "qost-ml" },
     { name = "twin-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "twin-core", editable = "packages/twin_core" }]
+requires-dist = [
+    { name = "qost-ml", editable = "ml" },
+    { name = "twin-core", editable = "packages/twin_core" },
+]
 
 [[package]]
 name = "qost-ml"
