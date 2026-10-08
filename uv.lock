@@ -964,11 +964,17 @@ name = "qost-collector"
 version = "0.1.0"
 source = { editable = "services/collector" }
 dependencies = [
+    { name = "aiomqtt" },
+    { name = "asyncua" },
     { name = "twin-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "twin-core", editable = "packages/twin_core" }]
+requires-dist = [
+    { name = "aiomqtt", specifier = ">=2.3" },
+    { name = "asyncua", specifier = ">=1.1.5" },
+    { name = "twin-core", editable = "packages/twin_core" },
+]
 
 [[package]]
 name = "qost-engine"
@@ -1344,6 +1350,7 @@ name = "twin-core"
 version = "0.1.0"
 source = { editable = "packages/twin_core" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "numpy" },
     { name = "openpyxl" },
     { name = "pydantic" },
@@ -1359,6 +1366,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.30" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pydantic", specifier = ">=2.9" },

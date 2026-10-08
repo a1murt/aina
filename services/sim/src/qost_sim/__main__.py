@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import os
 import signal
 import sys
 from collections.abc import Iterator
@@ -72,8 +73,9 @@ async def serve_live(cfg: TwinConfig, settings: SimSettings) -> None:
             cfg,
             space,
             url=settings.mqtt_url,
-            topic_root=contract.mqtt.topic_root,
+            topic_root=settings.sim_mqtt_topic_root or contract.mqtt.topic_root,
             state_codes=codes,
+            client_id=f"qost-sim-{os.getpid()}",
         )
         if settings.sim_mqtt
         else None
@@ -150,6 +152,7 @@ def cmd_backfill(cfg: TwinConfig, args: argparse.Namespace) -> int:
                 end=_instant(args.end),
                 seed=args.seed,
                 telemetry_period_s=args.telemetry_period,
+                batch_size=args.batch_size,
             )
         finally:
             await sink.aclose()
@@ -208,11 +211,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("live", help="run the virtual plant (default)")
     bf = sub.add_parser("backfill", help="write history backfill_from -> demo_start")
-    bf.add_argument("--sink", required=True, help="jsonl:PATH | null: | (later) db:")
+    bf.add_argument(
+        "--sink", required=True, help="jsonl:PATH | null: | db: (DATABASE_URL) | db:URL"
+    )
     bf.add_argument("--from", dest="start", help="override clock.backfill_from (ISO, with zone)")
     bf.add_argument("--to", dest="end", help="override clock.demo_start (ISO, with zone)")
     bf.add_argument("--seed", type=int)
     bf.add_argument("--telemetry-period", type=float, help="seconds (default: backfill period)")
+    bf.add_argument("--batch-size", type=int, default=500, help="events per sink write")
     ml = sub.add_parser("ml-dataset", help="raw PdM dataset as parquet")
     ml.add_argument("--out", required=True)
     ml.add_argument("--months", type=int)

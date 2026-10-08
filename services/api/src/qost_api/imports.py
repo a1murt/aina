@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from qost_api.audit import audit
 from qost_api.auth import Principal
+from twin_core.alert_text import alert_message_ru
 from twin_core.clock import Clock
 from twin_core.config import TwinConfig
 from twin_core.db import (
@@ -38,14 +39,6 @@ from twin_core.db import (
     ShiftReport,
 )
 from twin_core.importer import ImportReport, UploadedFile, run_import
-from twin_core.rules import (
-    AL_DEFECT_RATE,
-    AL_DOWNTIME_LIMIT,
-    AL_OEE_BELOW,
-    AL_OEE_NEAR,
-    AL_SYSTEMIC_DEFECTS,
-    Alert,
-)
 
 IMPORT_SOURCE = "import"
 
@@ -79,45 +72,6 @@ def job_view(job: ImportJob) -> dict[str, Any]:
         "created_ts": job.created_ts.isoformat(),
     }
     return body
-
-
-# --------------------------------------------------------------------------- alert texts
-
-
-def _pct(value: float) -> str:
-    return f"{value * 100:.2f}".rstrip("0").rstrip(".").replace(".", ",")
-
-
-def _num(value: float) -> str:
-    return f"{value:g}".replace(".", ",")
-
-
-def _day(value: date) -> str:
-    return value.strftime("%d.%m.%Y")
-
-
-def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
-    """Russian alert text for feeds and Telegram (Kazakh texts arrive with M8)."""
-    t = cfg.rules.thresholds
-    when = _day(alert.period_date) + (f", смена {alert.shift}" if alert.shift else "")
-    if alert.rule_id == AL_DEFECT_RATE and isinstance(alert.value, float):
-        name = cfg.areas[alert.entity].name_ru
-        return f"{name}: брак {_pct(alert.value)}% ({when}), норма {_pct(t.defect_rate_limit)}%"
-    if alert.rule_id in (AL_OEE_BELOW, AL_OEE_NEAR) and isinstance(alert.value, float):
-        name = cfg.lines[alert.entity].name_ru
-        return f"{name}: OEE {_pct(alert.value)}% ({when}), цель {_pct(t.oee_target)}%"
-    if alert.rule_id == AL_DOWNTIME_LIMIT and isinstance(alert.value, float):
-        name = cfg.equipment[alert.entity].name_ru
-        return (
-            f"{name}: внеплановый простой {_num(alert.value)} мин ({when}), "
-            f"лимит {_num(t.critical_downtime_limit_min_per_day)} мин в сутки"
-        )
-    if alert.rule_id == AL_SYSTEMIC_DEFECTS and isinstance(alert.value, dict):
-        parts = ", ".join(
-            f"{cfg.areas[area].name_ru} {_pct(rate)}%" for area, rate in alert.value.items()
-        )
-        return f"Брак вырос на всех участках ({when}): {parts}"
-    return f"{alert.rule_id} {alert.entity} ({when})"  # pragma: no cover - future rules
 
 
 # --------------------------------------------------------------------------- persistence

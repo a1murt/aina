@@ -27,5 +27,7 @@ class SimSettings(BaseSettings):
     """Pause before the reset handshake so the collector can flush its last batch."""
     sim_tick_s: float = 0.1
     sim_mqtt: bool = True
+    sim_mqtt_topic_root: str | None = None
+    """``SIM_MQTT_TOPIC_ROOT``: override of the contract's UNS root (tests run side by side)."""
     sim_resume: bool = True
     """``SIM_RESUME``: after a restart, replay to the last published plant time (same epoch)."""

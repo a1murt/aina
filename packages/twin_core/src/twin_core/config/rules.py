@@ -11,6 +11,7 @@ from twin_core.config.common import (
     Ident,
     NonEmptyStr,
     NonNegativeFloat,
+    NonNegativeInt,
     PositiveFloat,
     PositiveInt,
     StrictModel,
@@ -38,6 +39,8 @@ class Thresholds(StrictModel):
     pdm_warn_p: Fraction
     pdm_crit_p: Fraction
     telemetry_limit_lookahead_h: PositiveFloat
+    ckd_coverage_min_days: PositiveFloat = 2.0
+    """AL-L1: kits of a model / its daily plan below this many days -> warning."""
 
     @model_validator(mode="after")
     def _ordering(self) -> Thresholds:
@@ -84,6 +87,33 @@ class DqRule(StrictModel):
     name_kk: NonEmptyStr | None = None
 
 
+class EngineParams(StrictModel):
+    """Live engine parameters (SPEC §9; defaults are the SPEC values). All times are plant time."""
+
+    kpi_tick_s: PositiveFloat = 5.0
+    """FR-KPI-03: live KPIs are recomputed at least this often."""
+    bottleneck_window_h: PositiveFloat = 4.0
+    """§9.5: rolling window of the live bottleneck (besides the current shift)."""
+    buffer_balance_window_min: PositiveFloat = 30.0
+    """§9.4: window of the in/out balance for time to empty / full."""
+    unclassified_after_min: PositiveFloat = 10.0
+    """FR-ENG-04: stops without a reason older than this need classification."""
+    alert_debounce_s: NonNegativeFloat = 300.0
+    """AL-B1 / AL-L1: a condition must hold (and clear) this long before it raises (resolves)."""
+    bottleneck_rate_shifts: PositiveInt = 5
+    """FR-ENG-06: bottleneck rate = mean PQ of this many last closed shifts."""
+    live_oee_min_elapsed_min: NonNegativeFloat = 120.0
+    """AL-O1/O2 on the running shift only after this much of it has elapsed (projection)."""
+    s1_resolve_microstops: bool = True
+    """AL-S1 for class A fires at once; resolve it if the stop ends as a microstop."""
+    dq_live_lost: Literal["downtime", "literal"] = "downtime"
+    """DQ-02 live: compare the journal with PDOT + ADOT (``downtime``) or with PBT - APT
+    (``literal``, SPEC wording; it also counts flow delays and misses planned time)."""
+    flow_wip_tolerance: NonNegativeInt = 2
+    """DQ-04 live: residual units tolerated at shift boundaries — one body held by a blocked
+    upstream line plus one in process in the downstream line."""
+
+
 class RulesConfig(StrictModel):
     """Root of ``rules.yaml``."""
 
@@ -94,3 +124,4 @@ class RulesConfig(StrictModel):
     alert_rules: list[AlertRule] = []
     escalation: dict[Severity, EscalationLevel] = {}
     data_quality_rules: list[DqRule] = []
+    engine: EngineParams = EngineParams()

@@ -110,6 +110,15 @@ class OpcUaServer:
                 ua.QualifiedName(var.path[-1], idx),
                 ua.Variant(_default(var, start_time), _VARIANT[var.datatype]),
             )
+            # initial value stamped with plant time, not the server's wall clock
+            await server.write_attribute_value(
+                nodeid,
+                ua.DataValue(
+                    ua.Variant(_default(var, start_time), _VARIANT[var.datatype]),
+                    SourceTimestamp=_dt(start_time),
+                    ServerTimestamp=_dt(start_time),
+                ),
+            )
             self._nodeids[var.ident] = nodeid
             if var.hidden:
                 await node.write_attribute(

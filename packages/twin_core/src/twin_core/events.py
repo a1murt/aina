@@ -101,21 +101,47 @@ class EventIds(Protocol):
     def __call__(self, ts: datetime) -> str: ...
 
 
-class RandomIds:
-    """ULIDs with OS randomness (collector, api)."""
+_RANDOM_MAX = (1 << 80) - 1
+
+
+class _Monotonic:
+    """ULID monotonicity within one millisecond (ULID spec, "monotonic" mode).
+
+    The first id of a millisecond uses fresh randomness; further ids in the same
+    millisecond increment the previous 80-bit random part by one, so sorting by ``event_id``
+    within a millisecond preserves emission order. ``(ts, event_id)`` ordering therefore equals
+    emission order for events of one producer.
+    """
+
+    def __init__(self) -> None:
+        self._last_ms = -1
+        self._last_rand = 0
+
+    def _next(self, ms: int, fresh: bytes) -> str:
+        if ms == self._last_ms and self._last_rand < _RANDOM_MAX:
+            rand = self._last_rand + 1
+        else:
+            rand = int.from_bytes(fresh, "big") >> 1  # headroom: 2^79 increments per ms
+        self._last_ms, self._last_rand = ms, rand
+        return encode_ulid(ms, rand.to_bytes(10, "big"))
+
+
+class RandomIds(_Monotonic):
+    """Monotonic ULIDs with OS randomness (api, operator events)."""
 
     def __call__(self, ts: datetime) -> str:
-        return encode_ulid(ulid_ms(ts), os.urandom(10))
+        return self._next(ulid_ms(ts), os.urandom(10))
 
 
-class DeterministicIds:
-    """Reproducible ULIDs: randomness = blake2b(seed | nonce | sequence number).
+class DeterministicIds(_Monotonic):
+    """Reproducible monotonic ULIDs: randomness = blake2b(seed | nonce | sequence number).
 
     The simulator uses it so that the same seed, interventions and nonce give bit-identical
     events (FR-SIM-01) and re-running a backfill is idempotent.
     """
 
     def __init__(self, seed: int | str, nonce: str) -> None:
+        super().__init__()
         self._prefix = f"{seed}|{nonce}|".encode()
         self._seq = 0
 
@@ -126,7 +152,17 @@ class DeterministicIds:
     def __call__(self, ts: datetime) -> str:
         digest = hashlib.blake2b(self._prefix + str(self._seq).encode(), digest_size=10).digest()
         self._seq += 1
-        return encode_ulid(ulid_ms(ts), digest)
+        return self._next(ulid_ms(ts), digest)
+
+
+def content_ulid(ts: datetime, key: str) -> str:
+    """Content-addressed ULID: time part from ``ts``, random part = blake2b(``key``).
+
+    The collector derives ids of tag values from ``entity_type|entity|kind|signal|ts|value``,
+    so a value delivered twice (reconnect, restart, OPC UA and MQTT paths) gets the same id and
+    is stored once (``ON CONFLICT DO NOTHING``).
+    """
+    return encode_ulid(ulid_ms(ts), hashlib.blake2b(key.encode(), digest_size=10).digest())
 
 
 # --------------------------------------------------------------------------- payloads
@@ -372,6 +408,7 @@ __all__ = [
     "UnitData",
     "UnitEvent",
     "UnitResult",
+    "content_ulid",
     "dumps",
     "encode_ulid",
     "make_event",

@@ -19,7 +19,7 @@ HOST_REDIS_URL ?= redis://localhost:6379/0
 export NEXT_TELEMETRY_DISABLED := 1
 
 .PHONY: help up down ps logs check test fmt py-lint py-type py-test web-check web-install \
-	migrate config-check seed demo demo-reset tagmap ml-dataset ml-train
+	migrate config-check seed demo demo-reset tagmap ml-dataset ml-train history
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -85,6 +85,12 @@ config-check: ## validate config/*.yaml (and the tag map, if present)
 
 seed: ## users of all roles, reference data, calendar, plan (M4)
 	@echo "make seed: not implemented until M4"
+
+history: ## sim backfill 01.09 -> demo_start into the DB, then the engine recomputes it (run after migrate)
+	DATABASE_URL=$(HOST_DATABASE_URL) $(UV) run --package qost-sim \
+		python -m qost_sim backfill --sink db: --batch-size 5000
+	DATABASE_URL=$(HOST_DATABASE_URL) REDIS_URL=$(HOST_REDIS_URL) $(UV) run --package qost-engine \
+		python -m qost_engine replay
 
 demo: ## migrations -> seed -> backfill -> case import -> live (M4)
 	@echo "make demo: not implemented until M4"
