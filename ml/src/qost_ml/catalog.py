@@ -95,7 +95,7 @@ class FeatureCatalog:
             template = entry[f"{lang}_neg"]
         else:
             template = entry[lang]
-        fields: dict[str, Any] = {"value": 0.0 if missing else float(value)}
+        fields: dict[str, Any] = {"value": _CommaDecimal(0.0 if missing else float(value))}
         fields["horizon"] = self.spec.horizon_h
         if "signal" in parts:
             sig = self.data["signals"][parts["signal"]]
@@ -142,3 +142,10 @@ class FeatureCatalog:
                         if not text.strip() or "{" in text or "None" in text:
                             out.append(f"{feature} ({lang}, {value}): bad text {text!r}")
         return sorted(set(out))
+
+
+class _CommaDecimal(float):
+    """A float that formats with a decimal comma (ru/kk number format, SPEC §13.1)."""
+
+    def __format__(self, spec: str) -> str:
+        return format(float(self), spec).replace(".", ",")
