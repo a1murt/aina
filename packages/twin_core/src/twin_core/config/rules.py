@@ -107,6 +107,10 @@ class EngineParams(StrictModel):
     """FR-ENG-06: bottleneck rate = mean PQ of this many last closed shifts."""
     live_oee_min_elapsed_min: NonNegativeFloat = 120.0
     """AL-O1/O2 on the running shift only after this much of it has elapsed (projection)."""
+    live_kpi_min_apt_min: NonNegativeFloat = 15.0
+    """Live E and OEE are published as ``null`` while the running shift has less APT than this:
+    a body started before the shift boundary makes E > 1 on a tiny APT (display only; stored
+    ``kpi_shift`` rows keep full values)."""
     s1_resolve_microstops: bool = True
     """AL-S1 for class A fires at once; resolve it if the stop ends as a microstop."""
     dq_live_lost: Literal["downtime", "literal"] = "downtime"

@@ -839,6 +839,12 @@ class EngineCore:
 
     # ================================================================== shift close (FR-KPI-04)
 
+    def _live_kpi(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Hide E and OEE of the running shift until APT reaches ``live_kpi_min_apt_min``."""
+        if _as_float(values.get("apt")) < self.params.live_kpi_min_apt_min:
+            return {**values, "effectiveness": None, "oee": None}
+        return values
+
     def _line_kpis(self, acc: ShiftAcc, hi: float) -> dict[str, ShiftKpi]:
         lo = acc.start
         hi = min(hi, acc.end)
@@ -1720,7 +1726,7 @@ class EngineCore:
                 * elapsed
                 / max((acc.end - acc.start) / 60.0, 1.0)
             )
-            values = kpi_values(kpi)
+            values = self._live_kpi(kpi_values(kpi))
             data = {
                 "level": "line",
                 "code": line,
@@ -1757,7 +1763,7 @@ class EngineCore:
                 "code": area,
                 "shift": shift,
                 "final": False,
-                **kpi_values(kpi),
+                **self._live_kpi(kpi_values(kpi)),
             }
             self.views["areas"][area] = data
             msgs.append(LiveMsg("kpi", now, data, ("areas", area, data)))
