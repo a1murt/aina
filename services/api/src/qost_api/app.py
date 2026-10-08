@@ -15,6 +15,7 @@ from qost_api.forecast.data import DbForecastBackend, ForecastBackend
 from qost_api.forecast.service import ForecastService
 from qost_api.problems import install_problem_handlers
 from qost_api.routes import forecast, imports
+from qost_api.routes import reports as reports_routes
 from qost_api.settings import ApiSettings
 from twin_core.clock import Clock, SimClock, create_clock
 from twin_core.config import TwinConfig
@@ -81,6 +82,7 @@ def create_app(
     install_problem_handlers(app)
     app.include_router(imports.router)
     app.include_router(forecast.router)
+    app.include_router(reports_routes.router)
 
     @app.get("/healthz", tags=["service"])
     async def healthz() -> dict[str, str]:

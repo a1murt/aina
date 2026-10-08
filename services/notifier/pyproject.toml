@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Qost Twin Telegram notifier"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "aiogram>=3.31,<4",
+    # aiogram's own HTTP client, used directly for the API ack call (no extra package)
+    "aiohttp>=3.9",
     "twin-core",
 ]
 

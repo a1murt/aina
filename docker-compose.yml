@@ -157,6 +157,9 @@ services:
       args: { PACKAGE: qost-notifier }
     image: qost/notifier:dev
     command: ["python", "-m", "qost_notifier"]
+    environment:
+      <<: *python-env
+      NOTIFIER_API_URL: http://api:8000   # «Принять» -> POST /api/v1/alerts/{id}/ack
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8130/healthz', timeout=3)"]
       <<: *healthcheck-timing
