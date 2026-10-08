@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import simpy
 
 from qost_sim.model.line import Body
+from twin_core.schedule import ckd_daily_plan
 
 if TYPE_CHECKING:
     from qost_sim.model.plant import PlantModel
@@ -119,18 +120,7 @@ class Ckd:
 
     def daily_plan(self, day: date) -> dict[str, float]:
         """Planned kits per working day for ``day``'s month (plan.yaml, else line rate x mix)."""
-        cfg = self.model.cfg
-        month = f"{day.year:04d}-{day.month:02d}"
-        per_month: dict[str, float] = {}
-        for entry in cfg.plant.plan:
-            if entry.month == month and entry.level == "line_model" and entry.product:
-                per_month[entry.product] = per_month.get(entry.product, 0.0) + entry.qty
-        if per_month:
-            days = len(cfg.calendar.working_days_in_month(day.year, day.month)) or 1
-            return {p: per_month.get(p, 0.0) / days for p in self.order}
-        first_line = cfg.lines[cfg.flow_lines[0]]
-        per_day = first_line.plan_rate_per_shift * len(cfg.calendar.shift_codes)
-        return {p: self.shares[p] * per_day for p in self.order}
+        return ckd_daily_plan(self.model.cfg, day)
 
     def dispatch(self, day: date) -> None:
         """Send one lot per product (called at the first shift start of a delivery day)."""

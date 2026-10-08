@@ -31,7 +31,7 @@ jobs:
       - name: Mypy (strict)
         run: uv run mypy
       - name: Pytest (unit, no integration, no full ML run)
-        run: uv run pytest -m "not integration and not ml" -q
+        run: uv run pytest -m "not integration and not ml and not validation" -q
 
   web:
     runs-on: ubuntu-latest

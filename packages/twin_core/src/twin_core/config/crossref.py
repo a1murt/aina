@@ -651,6 +651,20 @@ def _check_simulation(c: _Checker, m: Models) -> None:
             c.ref(SIMULATION, (*base, "product"), inject.product, products, "product")
 
 
+def _check_forecast(c: _Checker, m: Models) -> None:
+    fc = m.simulation.forecast
+    shift_codes = [s.code for s in m.plant.calendar.shifts]
+    buffers = [b.code for b in m.plant.buffers]
+    levers: Loc = ("forecast", "levers")
+    c.ref(SIMULATION, (*levers, "buffer", "code"), fc.levers.buffer.code, buffers, "buffer")
+    for i, code in enumerate(fc.levers.extra_shift.shifts):
+        c.ref(SIMULATION, (*levers, "extra_shift", "shifts", i), code, shift_codes, "shift")
+    for name, cand in fc.levers.shifts_needed.candidates.items():
+        loc: Loc = (*levers, "shifts_needed", "candidates", name, "shifts")
+        for i, code in enumerate(cand.shifts or []):
+            c.ref(SIMULATION, (*loc, i), code, shift_codes, "shift")
+
+
 # --------------------------------------------------------------------------- business.yaml
 
 
@@ -721,6 +735,7 @@ def check_references(models: Models, sources: Mapping[str, YamlSource]) -> list[
     _check_defects(c, models.defects, models.plant)
     _check_aliases(c, models)
     _check_simulation(c, models)
+    _check_forecast(c, models)
     _check_business(c, models)
     if models.tag_map is not None and TAG_MAP in sources:
         check_tag_map(c, models.plant, models.tag_map)
