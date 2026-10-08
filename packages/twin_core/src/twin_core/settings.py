@@ -25,7 +25,7 @@ def default_config_dir() -> Path:
 
 
 class TwinSettings(BaseSettings):
-    """Settings common to every Qost Twin process."""
+    """Settings common to every Aina process."""
 
     model_config = SettingsConfigDict(extra="ignore", frozen=True)
 

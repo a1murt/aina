@@ -1,7 +1,7 @@
 [project]
 name = "qost-collector"
 version = "0.1.0"
-description = "Qost Twin collector (OPC UA / MQTT, read-only)"
+description = "Aina collector (OPC UA / MQTT, read-only)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "aiomqtt>=2.3",

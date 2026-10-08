@@ -18,7 +18,7 @@ SEVERITY_TAGS: dict[str, str] = {
     "info": "[ИНФО]",
 }
 
-START = "Оповещения Qost Twin. Выберите роль, затем введите PIN роли."
+START = "Оповещения Aina. Выберите роль, затем введите PIN роли."
 NO_ROLES = "Подписка недоступна: роли и PIN не настроены (TELEGRAM_ROLE_PINS)."
 ASK_PIN = "Введите PIN роли «{role}»."
 UNKNOWN_ROLE = "Неизвестная роль. Нажмите /start."

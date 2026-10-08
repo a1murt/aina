@@ -1,7 +1,7 @@
 [project]
 name = "qost-sim"
 version = "0.1.0"
-description = "Qost Twin virtual plant (SimPy, OPC UA, MQTT)"
+description = "Aina virtual plant (SimPy, OPC UA, MQTT)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "aiomqtt>=2.3",

@@ -1,7 +1,7 @@
 [project]
-name = "qost-twin"
+name = "aina"
 version = "0.1.0"
-description = "Qost Twin: digital twin of a car plant (workspace root)"
+description = "Aina: digital twin of a car plant (workspace root)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "twin-core",
