@@ -20,6 +20,7 @@ thresholds:
   pdm_warn_p: 0.50
   pdm_crit_p: 0.80
   telemetry_limit_lookahead_h: 12           # прогноз выхода сигнала за limit_hi (например, ΔP фильтров)
+  ckd_coverage_min_days: 2                  # AL-L1: запас комплектов модели < 2 суток плана
 
 data_quality:
   load_mismatch_pp: 0.5        # DQ-01: |загрузка из отчёта − рассчитанная доступность| > 0.5 п.п.
@@ -102,6 +103,19 @@ escalation:
   # если оповещение не подтверждено (ack) за timeout — уведомляется следующий уровень
   warning:  { timeout_min: 30, chain: [master, director] }
   critical: { timeout_min: 10, chain: [master, maintenance, director] }
+
+# Параметры движка (services/engine, SPEC §9). Время — заводское.
+engine:
+  kpi_tick_s: 5                  # FR-KPI-03: live-KPI не реже раза в 5 с
+  bottleneck_window_h: 4         # §9.5: скользящее окно узкого места (кроме смены)
+  buffer_balance_window_min: 30  # §9.4: баланс входа/выхода буфера для «до заполнения/опустошения»
+  unclassified_after_min: 10     # FR-ENG-04: простой без причины старше 10 мин — «требует классификации»
+  alert_debounce_s: 300          # AL-B1/L1: условие держится 5 мин, прежде чем поднять/снять оповещение
+  bottleneck_rate_shifts: 5      # FR-ENG-06: темп узкого места = средний выпуск за 5 закрытых смен
+  live_oee_min_elapsed_min: 120  # AL-O1/O2 по текущей смене — только после 2 ч (прогноз)
+  s1_resolve_microstops: true    # AL-S1 класса A — сразу; закрыть, если остановка оказалась микроостановкой
+  dq_live_lost: downtime         # DQ-02 live: журнал vs PDOT+ADOT (downtime) | PBT−APT (literal)
+  flow_wip_tolerance: 2          # DQ-04 live: допуск — кузов у заблокированной линии + кузов в работе
 
 data_quality_rules:
   - { id: DQ-01, name_ru: "Загрузка в отчёте не совпадает с часами работы" }

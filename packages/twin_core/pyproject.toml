@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Qost Twin shared core: plant config, domain, clock, calendar, KPI, DQ, rules, import, DB schema"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "asyncpg>=0.30",
     "numpy>=2.0",
     "openpyxl>=3.1",
     "pydantic>=2.9",

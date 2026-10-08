@@ -325,6 +325,13 @@ class Downtime(Base):
         Index(None, "line", "start_ts"),
         Index(None, "entity", "start_ts"),
         Index(None, "shift_date", "line"),
+        Index(
+            "ux_downtime_engine_key",
+            "entity",
+            "start_ts",
+            unique=True,
+            postgresql_where=text("import_id IS NULL AND start_ts IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = _pk_id()
@@ -496,6 +503,20 @@ class DqIssueRow(Base):
     import_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("import_job.id", ondelete="CASCADE"), index=True
     )
+    dedup_key: Mapped[str | None] = mapped_column(Text, unique=True)
+    """Live findings (engine, collector DQ-07) are upserted by key; imports keep NULL."""
+
+
+class EngineCheckpoint(Base):
+    """Restart point of the engine: stream position, last event time, state snapshot (NFR-03)."""
+
+    __tablename__ = "engine_checkpoint"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    stream_id: Mapped[str | None] = mapped_column(Text)
+    event_ts: Mapped[datetime | None] = mapped_column(Tz)
+    state: Mapped[dict[str, Any] | None] = mapped_column(Json)
+    updated_ts: Mapped[datetime] = mapped_column(Tz)
 
 
 class ForecastRun(Base):

@@ -1,17 +1,22 @@
-"""Entry point: ``python -m qost_collector``.
+"""Entry point: ``python -m qost_collector`` — the read-only collector (SPEC §7.1–7.3).
 
-Stage M0 stub (real implementation in M3): validates the plant config and serves
-``/healthz`` + ``/readyz`` on port 8110 (``HEALTH_PORT`` overrides).
+Subscribes to OPC UA nodes and MQTT topics of the tag map, normalizes values into
+``twin_core.events`` and writes them in batches to the database and the Redis Stream ``events``,
+with a disk spool when either is unavailable. Health on ``HEALTH_PORT`` (8110).
 """
 
-from twin_core.health import stub_main
+from __future__ import annotations
+
+import asyncio
 
 SERVICE = "collector"
 DEFAULT_PORT = 8110
 
 
 def main() -> None:
-    stub_main(SERVICE, default_port=DEFAULT_PORT)
+    from qost_collector.service import run_service
+
+    asyncio.run(run_service())
 
 
 if __name__ == "__main__":

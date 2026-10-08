@@ -101,9 +101,9 @@ files = [
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 
-# Libraries without type information (SPEC §4.3 stack): scipy, scikit-learn, shap.
+# Libraries without type information (SPEC §4.3 stack): scipy, scikit-learn, shap, asyncpg.
 [[tool.mypy.overrides]]
-module = ["scipy.*", "sklearn.*", "shap.*"]
+module = ["scipy.*", "sklearn.*", "shap.*", "asyncpg", "asyncpg.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

@@ -534,3 +534,199 @@ def line_loss_tree(
         item(LossCategory.QUALITY, produced_min - good_min),
     ]
     return LossTree(tuple(items))
+
+
+# --------------------------------------------------------------------------- event time model
+
+
+_DOWN = frozenset({"DOWN_UNPLANNED", "DOWN_PLANNED"})
+
+
+@dataclass(frozen=True, slots=True)
+class StateSpan:
+    """A state interval of a line, seconds on any common time axis (``end`` exclusive)."""
+
+    start: float
+    end: float
+    state: str
+
+
+@dataclass(frozen=True, slots=True)
+class StopSpan:
+    """A downtime record of the line (``DOWN_*`` only), seconds on the same axis.
+
+    ``duration_s`` is the full duration of the stop (elapsed so far for an open stop); it decides
+    microstop vs failure, independent of clipping to the window. ``planned`` is the current
+    classification of the record (it changes when a reason is (re)classified, FR-ENG-03).
+    """
+
+    start: float
+    end: float
+    planned: bool
+    duration_s: float
+
+
+def _clip(start: float, end: float, lo: float, hi: float) -> float:
+    return max(0.0, min(end, hi) - max(start, lo))
+
+
+def shift_time_model(
+    *,
+    window: tuple[float, float],
+    pot_min: float,
+    states: Iterable[StateSpan],
+    stops: Iterable[StopSpan],
+    microstop_threshold_s: float,
+) -> TimeModel:
+    """ISO 22400 time elements of one line over ``window`` from its state and stop records.
+
+    One function for the live tick (window = shift start .. now), the shift close, the history
+    replay and the recomputation from stored rows:
+
+    * ``DOWN_*`` time is classified by the line's downtime records: planned -> PDOT; unplanned
+      with full duration >= threshold -> ADOT; shorter -> microstop (inside APT). Down time not
+      covered by a record falls back to its state (``DOWN_PLANNED`` -> PDOT, else ADOT);
+    * ``STARVED`` / ``BLOCKED`` -> ADET; ``CHANGEOVER`` -> AUST;
+    * ``IDLE_NO_PLAN`` inside a working shift -> PDOT (no plan is a planned non-production);
+    * everything else in POT (running, degraded, not yet observed) is APT.
+
+    ``pot_min`` is the calendar POT of the window (0 for a non-working shift: then every element
+    is 0). Elements are clamped so the :class:`TimeModel` invariants hold under float noise.
+    """
+    lo, hi = window
+    if pot_min <= 0 or hi <= lo:
+        return TimeModel(pot=max(pot_min, 0.0))
+    pdot = adot = starved = blocked = aust = micro = 0.0
+    down_by_state = {"DOWN_UNPLANNED": 0.0, "DOWN_PLANNED": 0.0}
+    for span in states:
+        sec = _clip(span.start, span.end, lo, hi)
+        if sec <= 0:
+            continue
+        if span.state in _DOWN:
+            down_by_state[span.state] += sec
+        elif span.state == "STARVED":
+            starved += sec
+        elif span.state == "BLOCKED":
+            blocked += sec
+        elif span.state == "CHANGEOVER":
+            aust += sec
+        elif span.state == "IDLE_NO_PLAN":
+            pdot += sec
+    recorded = 0.0
+    for stop in stops:
+        sec = _clip(stop.start, stop.end, lo, hi)
+        if sec <= 0:
+            continue
+        recorded += sec
+        if stop.planned:
+            pdot += sec
+        elif is_microstop(stop.duration_s, microstop_threshold_s):
+            micro += sec
+        else:
+            adot += sec
+    uncovered = sum(down_by_state.values()) - recorded
+    if uncovered > _EPS:
+        planned_share = down_by_state["DOWN_PLANNED"]
+        extra_planned = min(uncovered, planned_share)
+        pdot += extra_planned
+        adot += uncovered - extra_planned
+    to_min = 1.0 / SECONDS_PER_MINUTE
+    pot = pot_min
+    pdot_m = min(pdot * to_min, pot)
+    pbt = pot - pdot_m
+    losses = [adot * to_min, starved * to_min, blocked * to_min, aust * to_min]
+    total = sum(losses)
+    if total > pbt and total > 0:
+        losses = [x * pbt / total for x in losses]
+    adot_m, starved_m, blocked_m, aust_m = losses
+    apt = max(pbt - adot_m - starved_m - blocked_m - aust_m, 0.0)
+    return TimeModel(
+        pot=pot,
+        pdot=pdot_m,
+        adot=adot_m,
+        starved=starved_m,
+        blocked=blocked_m,
+        aust=aust_m,
+        microstop=min(micro * to_min, apt),
+    )
+
+
+def aggregate_kpi(kpis: Sequence[ShiftKpi]) -> ShiftKpi | None:
+    """KPIs of several lines (an area) or periods: sums of time elements and counts, then the
+    same ratios (OEE = sum PRI(GQ) / sum PBT). ``None`` for an empty input."""
+    if not kpis:
+        return None
+    pot = sum(k.pot_min for k in kpis)
+    pdot = sum(k.pdot_min for k in kpis)
+    time = TimeModel(
+        pot=pot,
+        pdot=min(pdot, pot),
+        adot=sum(k.adot_min for k in kpis),
+        starved=sum(k.adet_min for k in kpis),
+        aust=sum(k.aust_min for k in kpis),
+        microstop=sum(k.microstop_min for k in kpis),
+    )
+    failures = [k.failures for k in kpis]
+    repairs = [k.repair_min for k in kpis]
+    return compute_shift_kpi(
+        time,
+        pq=sum(k.pq for k in kpis),
+        gq=sum(k.gq for k in kpis),
+        pri_produced_s=sum(k.pri_produced_s for k in kpis),
+        pri_good_s=sum(k.pri_good_s for k in kpis),
+        failures=None if any(f is None for f in failures) else sum(f or 0 for f in failures),
+        repair_min=None if any(r is None for r in repairs) else sum(r or 0.0 for r in repairs),
+    )
+
+
+# --------------------------------------------------------------------------- impact (FR-ENG-06)
+
+
+@dataclass(frozen=True, slots=True)
+class StopImpact:
+    """Estimated output impact of an unplanned stop (FR-ENG-06)."""
+
+    lost_min: float
+    """Effective capacity lost: duration x (1 - degraded_capacity)."""
+    lost_units: float
+    """Lost minutes in cars (x 60 / ICT)."""
+    bottleneck: bool
+    """The stopped line is the bottleneck: the loss is not recoverable."""
+    irrecoverable_units: float
+    recover_shifts: float | None
+    """Shifts the line needs to catch up with its spare capacity (None: not recoverable)."""
+
+
+def stop_impact(
+    *,
+    elapsed_min: float,
+    degraded_capacity: float,
+    ict_seconds: float,
+    is_bottleneck: bool,
+    line_capacity_per_shift: float,
+    bottleneck_rate_per_shift: float | None,
+    upstream_free_units: float | None,
+) -> StopImpact:
+    """FR-ENG-06: a stop of the bottleneck loses output for good (minutes x 60 / ICT); a stop of
+    another line is recovered in N = loss / (line capacity - bottleneck rate) shifts, provided
+    the upstream buffer has room for the bodies that pile up meanwhile (otherwise the excess is
+    lost upstream). ``None`` inputs mean "unknown" and make the loss irrecoverable."""
+    lost_min = capacity_loss_min(max(elapsed_min, 0.0), degraded_capacity, planned=False)
+    lost_units = minutes_to_units(lost_min, ict_seconds) or 0.0
+    if is_bottleneck or lost_units <= 0:
+        return StopImpact(
+            lost_min,
+            lost_units,
+            is_bottleneck,
+            lost_units if is_bottleneck else 0.0,
+            None if is_bottleneck else 0.0,
+        )
+    spare = None
+    if bottleneck_rate_per_shift is not None:
+        spare = line_capacity_per_shift - bottleneck_rate_per_shift
+    if spare is None or spare <= 0:
+        return StopImpact(lost_min, lost_units, False, lost_units, None)
+    room = upstream_free_units if upstream_free_units is not None else lost_units
+    irrecoverable = max(0.0, lost_units - max(room, 0.0))
+    recoverable = lost_units - irrecoverable
+    return StopImpact(lost_min, lost_units, False, irrecoverable, recoverable / spare)

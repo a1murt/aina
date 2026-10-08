@@ -109,8 +109,10 @@ services:
       sim:
         condition: service_healthy
         required: false   # absent in the prod profile
+    stop_grace_period: 20s   # flush the last batch / spool on SIGTERM
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8110/healthz', timeout=3)"]
+      # ready = OPC UA and MQTT sources connected (outputs may spool while DB/Redis are down)
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8110/readyz', timeout=3)"]
       <<: *healthcheck-timing
 
   engine:
@@ -124,8 +126,10 @@ services:
     volumes:
       - ./config:/app/config:ro
       - ml-models:/app/ml/models
+    stop_grace_period: 20s   # final commit + checkpoint on SIGTERM
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8120/healthz', timeout=3)"]
+      # ready = checkpoint restored, consumer group attached, live view rebuilt
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8120/readyz', timeout=3)"]
       <<: *healthcheck-timing
 
   api:
