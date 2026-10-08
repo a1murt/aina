@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from m3_stack import create_database, drop_database, query, url_string
 from sqlalchemy.engine import URL
 
+from api_support import bearer
 from qost_api.app import create_app
 from qost_engine.replay import run_replay
 from qost_notifier.store import NotificationRow, PgStore
@@ -35,7 +36,7 @@ pytestmark = pytest.mark.integration
 
 START = datetime.fromisoformat("2026-10-01T00:00:00+05:00")
 END = datetime.fromisoformat("2026-10-15T00:00:00+05:00")
-MASTER = {"X-Dev-Role": "master", "X-Dev-User": "it-master"}
+MASTER = bearer("master", username="it-master")
 
 
 @pytest.fixture(scope="module")

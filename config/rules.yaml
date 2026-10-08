@@ -93,6 +93,18 @@ alert_rules:
     severity: warning
     recipients: [maintenance, master]
     channels: [ui, telegram]
+  - id: AL-A1
+    name_ru: "Андон: вызов мастера"
+    when: "оператор нажал «Андон» на терминале линии (POST /operator/andon); повторное нажатие при открытом вызове — счётчик"
+    severity: warning
+    recipients: [master]
+    channels: [ui, telegram]
+  - id: AL-A2
+    name_ru: "Вызов материалов"
+    when: "оператор нажал «Нет комплектующих» (POST /operator/material-call)"
+    severity: warning
+    recipients: [master, director]
+    channels: [ui]
   - id: AL-L1
     name_ru: "Покрытие комплектами CKD ниже 2 дней"
     when: "запас комплектов модели / суточный план модели < 2"

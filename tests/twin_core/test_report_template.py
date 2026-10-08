@@ -7,8 +7,8 @@ from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
-
 from report_support import DAY, kpi, sample_facts, sample_forecast
+
 from twin_core.config import TwinConfig
 from twin_core.report import (
     KK_DRAFT,

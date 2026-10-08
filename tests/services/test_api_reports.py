@@ -12,7 +12,9 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from report_support import DAY, sample_facts, sample_forecast
 
+from api_support import bearer
 from qost_api.app import create_app
 from qost_api.auth import Principal
 from qost_api.llm import (
@@ -27,7 +29,6 @@ from qost_api.llm import (
 from qost_api.reports.data import ReportRecord, StoredReport
 from qost_api.reports.service import ReportService, ShiftReportRequest
 from qost_api.routes.reports import get_report_service
-from report_support import DAY, sample_facts, sample_forecast
 from twin_core.calendar import ShiftInstance
 from twin_core.clock import ManualClock
 from twin_core.config import TwinConfig
@@ -267,7 +268,7 @@ def client(cfg: TwinConfig, clock: ManualClock, backend: MemoryBackend) -> Itera
 
 def test_post_and_get_shift_report(client: TestClient) -> None:
     body = {"date": "2026-10-15", "shift": "A", "lang": "ru"}
-    created = client.post("/api/v1/reports/shift", json=body, headers={"X-Dev-Role": "master"})
+    created = client.post("/api/v1/reports/shift", json=body, headers=bearer("master"))
     assert created.status_code == 201, created.text
     report = created.json()
     assert report["generated_by"] == "template"
@@ -277,7 +278,7 @@ def test_post_and_get_shift_report(client: TestClient) -> None:
     got = client.get(
         "/api/v1/reports/shift",
         params={"date": "2026-10-15", "shift": "A"},
-        headers={"X-Dev-Role": "director"},
+        headers=bearer("director"),
     )
     assert got.status_code == 200
     assert [r["id"] for r in got.json()] == [report["id"]]
@@ -285,7 +286,7 @@ def test_post_and_get_shift_report(client: TestClient) -> None:
         client.get(
             "/api/v1/reports/shift",
             params={"date": "2026-10-15", "shift": "A", "lang": "kk"},
-            headers={"X-Dev-Role": "director"},
+            headers=bearer("director"),
         ).json()
         == []
     )
@@ -294,7 +295,7 @@ def test_post_and_get_shift_report(client: TestClient) -> None:
 @pytest.mark.parametrize("role", ["operator", "maintenance", "quality"])
 def test_report_roles(client: TestClient, role: str) -> None:
     body = {"date": "2026-10-15", "shift": "A"}
-    response = client.post("/api/v1/reports/shift", json=body, headers={"X-Dev-Role": role})
+    response = client.post("/api/v1/reports/shift", json=body, headers=bearer(role))
     assert response.status_code == 403
     assert response.headers["content-type"] == PROBLEM
 
@@ -313,7 +314,7 @@ def test_report_problems(
     client: TestClient, clock: ManualClock, body: dict[str, str], status: int, slug: str
 ) -> None:
     clock.set(datetime.fromisoformat("2026-10-15T16:00:00+05:00"))
-    response = client.post("/api/v1/reports/shift", json=body, headers={"X-Dev-Role": "master"})
+    response = client.post("/api/v1/reports/shift", json=body, headers=bearer("master"))
     assert response.status_code == status, response.text
     assert response.json()["type"] == f"/problems/{slug}"
 
@@ -323,7 +324,7 @@ def test_without_database_reports_are_unavailable(cfg: TwinConfig) -> None:
         response = c.post(
             "/api/v1/reports/shift",
             json={"date": "2026-10-15", "shift": "A"},
-            headers={"X-Dev-Role": "master"},
+            headers=bearer("master"),
         )
     assert response.status_code == 503
     assert response.json()["type"] == "/problems/no-database"

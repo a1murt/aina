@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from api_support import bearer
 from forecast_support import History, demo_history
 from qost_api.app import create_app
 from qost_api.forecast.data import load_calibration_inputs, load_plant_state, load_targets
@@ -40,7 +41,7 @@ pytestmark = pytest.mark.integration
 BASE_URL = make_url(
     os.environ.get("TEST_DATABASE_URL", "postgresql+asyncpg://qost:qost@localhost:5432/qost")
 )
-DIRECTOR = {"X-Dev-Role": "director", "X-Dev-User": "it-director"}
+DIRECTOR = bearer("director", username="it-director")
 _DOWN = {EquipmentState.DOWN_UNPLANNED.value, EquipmentState.DOWN_PLANNED.value}
 
 
@@ -284,7 +285,7 @@ def test_forecast_run_is_persisted_and_audited(client: TestClient, db_url: URL) 
 
 
 def test_calibration_snapshot_once_per_window(client: TestClient, db_url: URL) -> None:
-    first = client.get("/api/v1/calibration", headers={"X-Dev-Role": "maintenance"})
+    first = client.get("/api/v1/calibration", headers=bearer("maintenance"))
     assert first.status_code == 200
     second = client.get("/api/v1/calibration", headers=DIRECTOR)
     assert second.json()["id"] == first.json()["id"]

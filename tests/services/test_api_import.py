@@ -1,4 +1,4 @@
-"""Import API without a database: roles (dev auth), RFC 7807 problems, template, helpers.
+"""Import API without a database: roles (JWT), RFC 7807 problems, template, helpers.
 
 The database path (POST/GET with persistence, idempotency) is tested in
 tests/integration/test_import_api.py.
@@ -14,6 +14,7 @@ import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 
+from api_support import bearer
 from qost_api.app import create_app
 from qost_api.imports import upload_digest, upload_name
 from qost_api.routes.imports import XLSX_MEDIA_TYPE
@@ -33,7 +34,7 @@ def client(cfg: TwinConfig) -> Iterator[TestClient]:
 
 
 def test_template_download(client: TestClient) -> None:
-    response = client.get("/api/v1/import/template.xlsx", headers={"X-Dev-Role": "director"})
+    response = client.get("/api/v1/import/template.xlsx", headers=bearer("director"))
     assert response.status_code == 200
     assert response.headers["content-type"] == XLSX_MEDIA_TYPE
     assert "qost_import_template.xlsx" in response.headers["content-disposition"]
@@ -43,7 +44,7 @@ def test_template_download(client: TestClient) -> None:
 
 @pytest.mark.parametrize("role", ["operator", "master", "maintenance", "quality"])
 def test_other_roles_are_forbidden(client: TestClient, role: str) -> None:
-    response = client.get("/api/v1/import/template.xlsx", headers={"X-Dev-Role": role})
+    response = client.get("/api/v1/import/template.xlsx", headers=bearer(role))
     assert response.status_code == 403
     assert response.headers["content-type"] == PROBLEM
     body = response.json()
@@ -53,33 +54,30 @@ def test_other_roles_are_forbidden(client: TestClient, role: str) -> None:
 
 
 def test_unknown_role_is_forbidden(client: TestClient) -> None:
-    response = client.post("/api/v1/import", headers={"X-Dev-Role": "root"})
+    response = client.post("/api/v1/import", headers=bearer("root"))
     assert response.status_code == 403
     assert "unknown role" in response.json()["detail"]
 
 
-def test_without_default_role_credentials_are_required(
-    cfg: TwinConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("DEV_AUTH_DEFAULT_ROLE", "")
+def test_credentials_are_required(cfg: TwinConfig) -> None:
     with TestClient(create_app(cfg, database_url=None)) as client:
         response = client.get("/api/v1/import/template.xlsx")
         assert response.status_code == 401
         assert response.headers["content-type"] == PROBLEM
-        ok = client.get("/api/v1/import/template.xlsx", headers={"X-Dev-Role": "admin"})
+        ok = client.get("/api/v1/import/template.xlsx", headers=bearer("admin"))
         assert ok.status_code == 200
 
 
 def test_data_endpoints_need_a_database(client: TestClient) -> None:
     files = {"files": (CASE_DOCX.name, CASE_DOCX.read_bytes())}
-    response = client.post("/api/v1/import", files=files)
+    response = client.post("/api/v1/import", files=files, headers=bearer("admin"))
     assert response.status_code == 503
     assert response.json()["type"] == "/problems/no-database"
-    assert client.get("/api/v1/import/1").status_code == 503
+    assert client.get("/api/v1/import/1", headers=bearer("admin")).status_code == 503
 
 
 def test_unknown_route_is_a_problem(client: TestClient) -> None:
-    response = client.get("/api/v1/nope")
+    response = client.get("/api/v1/nope", headers=bearer("admin"))
     assert response.status_code == 404
     assert response.headers["content-type"] == PROBLEM
     assert response.json()["title"] == "Not Found"

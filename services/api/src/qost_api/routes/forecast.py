@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, Query, Request, status
 
 from qost_api.auth import Principal, require_roles
@@ -21,6 +22,7 @@ from qost_api.forecast.service import (
     ForecastRunView,
     ForecastService,
 )
+from qost_api.plan_risk import record_plan_risk
 from qost_api.problems import ProblemError
 from twin_core.config.plant import Month
 from twin_core.forecast.effect import EffectResult
@@ -31,6 +33,7 @@ CALIBRATION_ROLES = ("director", "admin", "maintenance")
 EFFECT_ROLES = ("director", "admin")
 
 router = APIRouter(prefix="/api/v1", tags=["forecast"])
+log = structlog.get_logger("qost_api.forecast")
 Forecaster = Annotated[Principal, Depends(require_roles(*FORECAST_ROLES))]
 Calibrator = Annotated[Principal, Depends(require_roles(*CALIBRATION_ROLES))]
 Economist = Annotated[Principal, Depends(require_roles(*EFFECT_ROLES))]
@@ -49,8 +52,9 @@ Service = Annotated[ForecastService, Depends(get_service)]
 
 
 def _problem(exc: ForecastError) -> ProblemError:
-    extra = {"errors": exc.errors} if exc.errors is not None else {}
-    return ProblemError(exc.status, exc.title, exc.detail, slug=exc.slug, **extra)
+    if exc.errors is not None:
+        return ProblemError(exc.status, exc.title, exc.detail, slug=exc.slug, errors=exc.errors)
+    return ProblemError(exc.status, exc.title, exc.detail, slug=exc.slug)
 
 
 @router.post(
@@ -59,12 +63,22 @@ def _problem(exc: ForecastError) -> ProblemError:
     summary="Month forecast, fast Monte Carlo with what-if overrides (FR-FC-01/02)",
 )
 async def post_forecast(
-    body: ForecastRequest, principal: Forecaster, service: Service
+    body: ForecastRequest, principal: Forecaster, service: Service, request: Request
 ) -> ForecastRunView:
     try:
-        return await service.forecast(body, principal)
+        view = await service.forecast(body, principal)
     except ForecastError as exc:
         raise _problem(exc) from exc
+    try:  # AL-P1 on the baseline of the current month (M4); never fails the forecast
+        await record_plan_risk(
+            request.app,
+            view.month,
+            view.overrides,
+            view.result.model_dump(mode="json") if view.result is not None else None,
+        )
+    except Exception as exc:
+        log.warning("plan_risk_failed", error=str(exc)[:200])
+    return view
 
 
 @router.get("/forecast/levers", summary="Levers with Δ cars, Δ P and effect (SPEC §10.4)")
