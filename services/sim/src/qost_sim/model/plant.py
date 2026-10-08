@@ -35,6 +35,7 @@ from twin_core.config.simulation import (
     SetStateInject,
 )
 from twin_core.domain import EquipmentState
+from twin_core.schedule import equipment_positions, is_delivery_day, pm_due, schedule_anchor
 
 _EPS = 1e-6
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -135,7 +136,8 @@ class PlantModel:
         self.products = cfg.products
         self.microstop_threshold_s = cfg.rules.thresholds.microstop_threshold_s
         self.signal_models = compile_signal_models(cfg)
-        self.anchor = self.sim.clock.backfill_from.astimezone(self.tz).date()
+        self.anchor = schedule_anchor(cfg)
+        self._positions = equipment_positions(cfg)
 
         self.outbox: list[Rec] = []
         self._batch = 0
@@ -286,16 +288,12 @@ class PlantModel:
 
     def _on_shift_start(self, shift: ShiftInstance) -> None:
         wd = self.working_day_index(shift.shift_date)
-        for pm in self.sim.planned_maintenance:
-            if pm.shift != shift.code:
-                continue
-            for unit in self.units_by_type.get(pm.equipment_type, []):
-                offset = unit.index if pm.stagger else 0
-                if (wd + offset) % pm.every_working_days == 0:
-                    unit.command("pm", pm.duration_min * 60.0, pm.reason)
+        for task in pm_due(
+            self.cfg, shift_code=shift.code, working_day=wd, positions=self._positions
+        ):
+            self.units[task.equipment].command("pm", task.duration_min * 60.0, task.reason)
         first = self.calendar.shifts_on(shift.shift_date, working_only=True)
-        delivery_day = wd % self.sim.ckd_supply.delivery_every_working_days == 0
-        if first and first[0].code == shift.code and delivery_day:
+        if first and first[0].code == shift.code and is_delivery_day(self.cfg, wd):
             self.ckd.dispatch(shift.shift_date)
 
     def work_in_shift(self, seconds: float) -> Generator[simpy.Event, Any, None]:

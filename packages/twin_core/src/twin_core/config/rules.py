@@ -19,6 +19,7 @@ from twin_core.domain import Channel, Criticality, Severity
 
 AlertRuleId = Annotated[str, StringConstraints(pattern=r"^AL-[A-Z0-9]+$")]
 DqRuleId = Annotated[str, StringConstraints(pattern=r"^DQ-\d{2}$")]
+PlanRiskTarget = Literal["line_plan", "plant_target"]
 
 
 class Thresholds(StrictModel):
@@ -34,6 +35,8 @@ class Thresholds(StrictModel):
     buffer_high_ratio: Fraction
     plan_risk_warn_p: Fraction
     plan_risk_crit_p: Fraction
+    plan_risk_target: PlanRiskTarget = "line_plan"
+    """Which monthly target AL-P1 watches: the line plan (4 800) or the plant target (5 500)."""
     pdm_horizon_h: PositiveFloat
     pdm_warn_p: Fraction
     pdm_crit_p: Fraction

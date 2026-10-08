@@ -17,10 +17,11 @@ from datetime import datetime, time, timedelta
 from qost_sim.model import PlantModel, Rec
 from twin_core.config import TwinConfig
 from twin_core.domain import EquipmentState
+from twin_core.events import FINISHED_RESULTS
 
 FIRST_EXITS = frozenset({"pass", "defect", "scrap"})
 REJECTS = frozenset({"defect", "scrap"})
-FG_RESULTS = frozenset({"pass", "rework_pass"})
+FG_RESULTS = FINISHED_RESULTS
 
 
 @dataclass
