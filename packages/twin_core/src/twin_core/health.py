@@ -30,8 +30,10 @@ async def start_health_server(
     port: int,
     host: str = "0.0.0.0",
     ready: Callable[[], bool] | None = None,
+    stats: Callable[[], dict[str, object]] | None = None,
 ) -> asyncio.Server:
-    """Serve ``GET /healthz`` (liveness) and ``GET /readyz`` (readiness) as JSON."""
+    """Serve ``GET /healthz`` (liveness), ``GET /readyz`` (readiness) and, when ``stats`` is
+    given, ``GET /stats`` (service counters) as JSON."""
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -51,9 +53,11 @@ async def start_health_server(
                 is_ready = ready() if ready is not None else True
                 status = 200 if is_ready else 503
                 payload = {"status": "ready" if is_ready else "not ready", "service": service}
+            elif path == "/stats" and stats is not None:
+                status, payload = 200, {"service": service, **stats()}
             else:
                 status, payload = 404, {"error": "not found"}
-            body = json.dumps(payload).encode()
+            body = json.dumps(payload, default=str).encode()
             head = (
                 f"HTTP/1.1 {status} {_REASONS[status]}\r\n"
                 "Content-Type: application/json\r\n"

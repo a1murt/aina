@@ -18,20 +18,24 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Final
 
-from twin_core.config.rules import RulesConfig, Thresholds
-from twin_core.domain import Severity
+from twin_core.config.rules import AlertRule, RulesConfig, Thresholds
+from twin_core.domain import Criticality, Severity
 from twin_core.kpi import round_fraction
 
+AL_EQUIPMENT_STOP: Final = "AL-S1"
 AL_DOWNTIME_LIMIT: Final = "AL-D1"
 AL_OEE_BELOW: Final = "AL-O1"
 AL_OEE_NEAR: Final = "AL-O2"
 AL_DEFECT_RATE: Final = "AL-Q1"
 AL_SYSTEMIC_DEFECTS: Final = "AL-Q3"
+AL_BUFFER: Final = "AL-B1"
+AL_CKD_COVERAGE: Final = "AL-L1"
 
 PLANT_ENTITY: Final = "PLANT"
 """Entity of plant-wide alerts (AL-Q3)."""
 
-AlertValue = float | dict[str, float]
+AlertValue = float | dict[str, Any]
+"""A number (rate, minutes) or a JSON object (live rules: elapsed, reason, impact, ...)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,10 +51,15 @@ class Alert:
     value: AlertValue
     shift: str | None = None
     """Shift code for per-shift rules; ``None`` for daily / plant-wide periods."""
+    period_key: str | None = None
+    """Explicit period of event-like rules (AL-S1/B1/L1: start of the stop or excursion, ISO UTC);
+    overrides the day/shift period in the deduplication key."""
 
     @property
     def period(self) -> str:
-        """``2026-10-02`` for a day, ``2026-10-02/A`` for a shift."""
+        """``2026-10-02`` for a day, ``2026-10-02/A`` for a shift, or :attr:`period_key`."""
+        if self.period_key:
+            return self.period_key
         day = self.period_date.isoformat()
         return f"{day}/{self.shift}" if self.shift else day
 
@@ -89,6 +98,9 @@ class AlertEvaluator:
 
     def enabled(self, rule_id: str) -> bool:
         return rule_id in self._rules
+
+    def rule(self, rule_id: str) -> AlertRule | None:
+        return self._rules.get(rule_id)
 
     def fixed_severity(self, rule_id: str) -> Severity | None:
         """Severity configured as a single value for the rule (``None`` if derived/absent)."""
@@ -178,3 +190,104 @@ class AlertEvaluator:
         if not (rose and over):
             return None
         return Alert(AL_SYSTEMIC_DEFECTS, severity, "site", PLANT_ENTITY, period_date, rates, shift)
+
+    # ------------------------------------------------------------------ live rules (M3)
+
+    def equipment_stop(
+        self,
+        *,
+        equipment: str,
+        criticality: Criticality,
+        period_date: date,
+        started_key: str,
+        elapsed_s: float,
+        value: Mapping[str, Any],
+    ) -> Alert | None:
+        """AL-S1: unplanned stop of a unit. Class A alerts at once; B and C after the stop lasts
+        ``microstop_threshold_s`` (5 min). Severity per criticality from ``rules.yaml``."""
+        rule = self._rules.get(AL_EQUIPMENT_STOP)
+        if rule is None:
+            return None
+        if criticality != "A" and elapsed_s < self.thresholds.microstop_threshold_s:
+            return None
+        if isinstance(rule.severity, dict):
+            severity = rule.severity.get(criticality)
+        else:
+            severity = rule.severity
+        if severity is None:
+            return None
+        return Alert(
+            AL_EQUIPMENT_STOP,
+            severity,
+            "equipment",
+            equipment,
+            period_date,
+            dict(value),
+            period_key=started_key,
+        )
+
+    def buffer_condition(self, *, level: int, capacity: int) -> tuple[Severity, str] | None:
+        """AL-B1 condition: (severity, ``low``|``high``) or ``None`` inside the normal band.
+
+        level = 0 -> critical; < low ratio x capacity -> warning; > high ratio x capacity ->
+        warning (risk of blocking the upstream line)."""
+        if not self.enabled(AL_BUFFER) or capacity <= 0:
+            return None
+        t = self.thresholds
+        if level <= 0:
+            return "critical", "low"
+        if level < t.buffer_low_ratio * capacity:
+            return "warning", "low"
+        if level > t.buffer_high_ratio * capacity:
+            return "warning", "high"
+        return None
+
+    def buffer_level(
+        self,
+        *,
+        buffer: str,
+        level: int,
+        capacity: int,
+        period_date: date,
+        started_key: str,
+    ) -> Alert | None:
+        """AL-B1 alert for one excursion (``started_key`` = its start)."""
+        condition = self.buffer_condition(level=level, capacity=capacity)
+        if condition is None:
+            return None
+        severity, direction = condition
+        return Alert(
+            AL_BUFFER,
+            severity,
+            "buffer",
+            buffer,
+            period_date,
+            {"level": level, "capacity": capacity, "direction": direction},
+            period_key=started_key,
+        )
+
+    def ckd_coverage(
+        self,
+        *,
+        product: str,
+        kits: int,
+        daily_plan: float,
+        period_date: date,
+        started_key: str,
+    ) -> Alert | None:
+        """AL-L1: kits of a model cover less than ``ckd_coverage_min_days`` of its daily plan."""
+        severity = self.fixed_severity(AL_CKD_COVERAGE)
+        if severity is None or daily_plan <= 0:
+            return None
+        days = kits / daily_plan
+        if round(days, 4) >= self.thresholds.ckd_coverage_min_days:
+            return None
+        return Alert(
+            AL_CKD_COVERAGE,
+            severity,
+            "product",
+            product,
+            period_date,
+            {"kits": kits, "daily_plan": round(daily_plan, 2), "coverage_days": round(days, 2)},
+            period_key=started_key,
+        )

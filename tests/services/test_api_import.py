@@ -15,9 +15,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from qost_api.app import create_app
-from qost_api.imports import alert_message_ru, upload_digest, upload_name
+from qost_api.imports import upload_digest, upload_name
 from qost_api.routes.imports import XLSX_MEDIA_TYPE
 from support import CASE_DOCX
+from twin_core.alert_text import alert_message_ru
 from twin_core.config import TwinConfig
 from twin_core.importer import UploadedFile
 from twin_core.rules import Alert

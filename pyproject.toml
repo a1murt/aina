@@ -99,6 +99,11 @@ files = [
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 
+# asyncpg ships no type information; its use is confined to twin_core.db and the engine writer.
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
+
 [tool.pydantic-mypy]
 init_forbid_extra = true
 init_typed = true

@@ -151,6 +151,51 @@ def check_flow_balance(
     )
 
 
+def check_flow_balance_live(
+    *,
+    upstream: str,
+    downstream: str,
+    period_date: date,
+    shift: str,
+    upstream_out: int,
+    downstream_in: int,
+    buffer_start: int,
+    buffer_end: int,
+    thresholds: DataQualityThresholds,
+    wip_tolerance: int = 2,
+) -> DqIssue | None:
+    """DQ-04 for a closed live shift, accounting for the buffer level change (SPEC §9.6).
+
+    ``upstream_out`` = bodies the upstream line sent downstream (``pass`` + ``rework_pass``),
+    ``downstream_in`` = first exits of the downstream line; the residual
+    ``upstream_out - downstream_in - (buffer_end - buffer_start)`` should be 0 up to the bodies in
+    process inside the downstream line (``wip_tolerance``). Larger |residual| -> info, and
+    >= ``flow_balance_warn_units`` -> warning (units lost or counted twice).
+    """
+    delta = buffer_end - buffer_start
+    residual = upstream_out - downstream_in - delta
+    if abs(residual) <= wip_tolerance:
+        return None
+    severity: Severity = (
+        "warning" if abs(residual) >= thresholds.flow_balance_warn_units else "info"
+    )
+    return DqIssue(
+        DQ_FLOW_BALANCE,
+        severity,
+        f"{upstream}->{downstream}",
+        period_date,
+        {
+            "shift": shift,
+            "upstream_out": upstream_out,
+            "downstream_in": downstream_in,
+            "buffer_start": buffer_start,
+            "buffer_end": buffer_end,
+            "buffer_change_units": delta,
+            "residual_units": residual,
+        },
+    )
+
+
 def check_plan_vs_target(*, line_model_plan: int, plant_target: int) -> DqIssue | None:
     """DQ-05: sum of line/model plans differs from the plant target -> warning with the gap."""
     if line_model_plan == plant_target:

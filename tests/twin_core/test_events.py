@@ -220,7 +220,7 @@ def test_sink_registry() -> None:
     register_sink("test-memory", lambda _arg: MemorySink())
     assert isinstance(open_sink("test-memory:x"), MemorySink)
     with pytest.raises(ValueError, match="unknown event sink"):
-        open_sink("db:")
+        open_sink("nosuch:")
     with pytest.raises(ValueError, match="needs a path"):
         open_sink("jsonl:")
     with pytest.raises(ValueError, match="unknown event sink"):
