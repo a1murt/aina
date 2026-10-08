@@ -11,7 +11,7 @@ import docx
 import openpyxl
 import pytest
 
-from support import CASE_CSVS, CASE_DOCX, golden, golden_differences
+from support import CASE_CSVS, CASE_DOCX, golden, golden_differences, require_case_docx
 from twin_core.config import TwinConfig
 from twin_core.importer import (
     ImportFormatError,
@@ -429,6 +429,7 @@ def test_template_round_trip(cfg: TwinConfig) -> None:
 
 
 def test_docx_reader_collects_tables_and_text(cfg: TwinConfig) -> None:
+    require_case_docx()
     upload = read_upload([UploadedFile(CASE_DOCX.name, CASE_DOCX.read_bytes())])
     assert upload.kind is ImportKind.DOCX
     assert len(upload.tables) == 4

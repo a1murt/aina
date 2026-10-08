@@ -23,7 +23,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from api_support import bearer
 from qost_api.app import create_app
-from support import CASE_CSVS, CASE_DOCX, CASE_XLSX, REPO_ROOT, golden_differences
+from support import (
+    CASE_CSVS,
+    CASE_DOCX,
+    CASE_XLSX,
+    REPO_ROOT,
+    golden_differences,
+    require_case_docx,
+)
 from twin_core.clock import ManualClock
 from twin_core.config import TwinConfig
 
@@ -135,6 +142,7 @@ def test_migrations_create_the_schema(db_url: URL) -> None:
 
 
 def test_docx_import_round_trip_and_idempotency(client: TestClient, db_url: URL) -> None:
+    require_case_docx()
     created = post(client, CASE_DOCX)
     assert created.status_code == 201, created.text
     body = created.json()
@@ -252,6 +260,7 @@ def test_bad_upload_is_a_problem_and_writes_nothing(client: TestClient, db_url: 
 
 
 def test_roles_and_missing_imports(client: TestClient) -> None:
+    require_case_docx()
     assert post(client, CASE_DOCX, headers=bearer("operator")).status_code == 403
     response = client.get("/api/v1/import/999", headers=bearer("admin"))
     assert response.status_code == 404

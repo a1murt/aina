@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import path from "node:path";
 
@@ -7,7 +8,11 @@ import path from "node:path";
  * what-if changes P50; alert ack. Needs `make demo` (seeded users, password DEMO_PASSWORD).
  */
 const PASSWORD = process.env.DEMO_PASSWORD ?? "qost2026";
-const CASE_DOCX = path.resolve(__dirname, "../../data/case/source/case2_data.docx");
+// The organisers' docx is not published in the repository; fall back to the xlsx copy (same golden).
+const CASE_DOCX_PATH = path.resolve(__dirname, "../../data/case/source/case2_data.docx");
+const CASE_DOCX = fs.existsSync(CASE_DOCX_PATH)
+  ? CASE_DOCX_PATH
+  : path.resolve(__dirname, "../../data/case/csv/case2_data.xlsx");
 
 async function token(request: APIRequestContext, user: string): Promise<string> {
   const res = await request.post("/api/v1/auth/login", { data: { username: user, password: PASSWORD } });

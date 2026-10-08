@@ -18,7 +18,7 @@ from api_support import bearer
 from qost_api.app import create_app
 from qost_api.imports import upload_digest, upload_name
 from qost_api.routes.imports import XLSX_MEDIA_TYPE
-from support import CASE_DOCX
+from support import CASE_DOCX, require_case_docx
 from twin_core.alert_text import alert_message_ru
 from twin_core.config import TwinConfig
 from twin_core.importer import UploadedFile
@@ -69,6 +69,7 @@ def test_credentials_are_required(cfg: TwinConfig) -> None:
 
 
 def test_data_endpoints_need_a_database(client: TestClient) -> None:
+    require_case_docx()
     files = {"files": (CASE_DOCX.name, CASE_DOCX.read_bytes())}
     response = client.post("/api/v1/import", files=files, headers=bearer("admin"))
     assert response.status_code == 503

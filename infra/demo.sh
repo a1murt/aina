@@ -73,9 +73,13 @@ $DC run --rm --no-deps sim python -m qost_sim backfill --sink db: --batch-size 5
 step "history: engine replay (derived tables, checkpoint, baseline)"
 $DC run --rm --no-deps engine python -m qost_engine replay
 
-step "import data/case/source/case2_data.docx (as admin)"
-$DC run --rm --no-deps -v "$ROOT/data/case/source:/app/data/case/source:ro" api \
-  python -m qost_api import data/case/source/case2_data.docx --user admin
+# The organisers' original docx is not published in the repository; when it is absent the
+# xlsx copy (same golden result) is imported instead.
+CASE_FILE=data/case/source/case2_data.docx
+[ -f "$ROOT/$CASE_FILE" ] || CASE_FILE=data/case/csv/case2_data.xlsx
+step "import $CASE_FILE (as admin)"
+$DC run --rm --no-deps -v "$ROOT/data/case:/app/data/case:ro" api \
+  python -m qost_api import "$CASE_FILE" --user admin
 
 step "live services (sim, collector, engine, api, notifier, web)"
 $DC up -d --no-deps --wait --wait-timeout 300 sim collector engine api notifier web

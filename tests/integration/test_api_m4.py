@@ -35,7 +35,7 @@ from qost_api.seed import run_seed
 from qost_api.settings import ApiSettings
 from qost_engine.replay import run_replay
 from qost_sim.backfill import run_backfill
-from support import CASE_DOCX, REPO_ROOT, golden
+from support import CASE_DOCX, REPO_ROOT, golden, require_case_docx
 from twin_core.clock import ManualClock
 from twin_core.config import TwinConfig
 from twin_core.db.sink import DbSink
@@ -142,6 +142,7 @@ def login(client: TestClient, user: str) -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 def imported(client: TestClient) -> dict[str, Any]:
+    require_case_docx()
     files = {"files": (CASE_DOCX.name, CASE_DOCX.read_bytes())}
     response = client.post("/api/v1/import", files=files, headers=login(client, "director"))
     assert response.status_code == 201, response.text
