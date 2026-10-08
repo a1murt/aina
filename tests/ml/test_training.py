@@ -146,12 +146,12 @@ def test_catalog_has_texts_for_every_feature(spec: PdmSpec) -> None:
     catalog = FeatureCatalog.load(spec)
     assert catalog.problems() == []
     assert (
-        catalog.text("vibration_mm_s_slope_4h", 0.523, "ru") == "вибрация растёт: +0.52 мм/с за 4 ч"
+        catalog.text("vibration_mm_s_slope_4h", 0.523, "ru") == "вибрация растёт: +0,52 мм/с за 4 ч"
     )
     assert catalog.text("vibration_mm_s_slope_4h", -0.2, "ru").startswith("вибрация снижается")
     assert (
         catalog.text("joint_temp_c_slope_24h", 2.0, "ru")
-        == "рост температуры оси: +2.00 °C за 24 ч"
+        == "рост температуры оси: +2,00 °C за 24 ч"
     )
     assert catalog.text("shift", 0, "ru") == "сейчас 1 смена"
     assert catalog.text("shift", 2, "kk") == "қазір ауысымнан тыс"
@@ -183,7 +183,7 @@ def test_top_factors_prefer_risk_raising_non_context_features(spec: PdmSpec) -> 
         "hours_since_pm",
     ]
     assert not {f.feature for f in factors} & set(CONTEXT_FEATURES)
-    assert factors[0].text_ru == "вибрация растёт: +0.60 мм/с за 4 ч"
+    assert factors[0].text_ru == "вибрация растёт: +0,60 мм/с за 4 ч"
 
 
 def test_shap_explanation_of_the_trained_model(
