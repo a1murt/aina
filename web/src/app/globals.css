@@ -138,3 +138,54 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ------------------------------------------------------------------ M5: motion and schema */
+
+@keyframes slide-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* AlarmPulse: an expanding ring around a unit in alarm (ISA-101: motion only for alarms). */
+@keyframes alarm-pulse {
+  0% { opacity: 0.95; stroke-width: 3; }
+  70% { opacity: 0; stroke-width: 10; }
+  100% { opacity: 0; stroke-width: 10; }
+}
+.alarm-pulse {
+  animation: alarm-pulse 1.4s ease-out infinite;
+}
+
+@keyframes flow-dash {
+  to { stroke-dashoffset: -32; }
+}
+.flow-dash {
+  animation: flow-dash 1.6s linear infinite;
+}
+
+.body-ok {
+  stroke: var(--card);
+  stroke-width: 2;
+}
+.body-defect {
+  stroke: var(--isa-alarm);
+  stroke-width: 3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alarm-pulse,
+  .flow-dash {
+    animation: none;
+  }
+}
+
+/* Numbers: tabular figures everywhere in data views (SPEC §13.1). */
+.tabular-nums,
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* TV mode (/live?tv=1): larger type for a wall screen. */
+[data-tv="1"] {
+  font-size: 1.125rem;
+}

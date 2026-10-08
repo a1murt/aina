@@ -9,6 +9,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 FROM base AS build
+# /api and /ws are proxied to the api service (same origin for the browser); Next resolves the
+# rewrite destinations at build time.
+ARG API_URL=http://api:8000
+ENV API_URL=${API_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm build
