@@ -7,6 +7,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = REPO_ROOT / "config"
 
@@ -34,6 +36,15 @@ CASE_DOCX = CASE_DIR / "source" / "case2_data.docx"
 CASE_XLSX = CASE_DIR / "csv" / "case2_data.xlsx"
 CASE_CSVS = tuple(sorted((CASE_DIR / "csv").glob("*.csv")))
 GOLDEN_JSON = CASE_DIR / "expected" / "import_expected.json"
+
+
+def require_case_docx() -> None:
+    """Skip when the organisers' original case files are absent: they are not published in the
+    repository (put them into ``data/case/source/`` locally); the CSV/XLSX copies stay."""
+    if not CASE_DOCX.is_file():
+        pytest.skip("data/case/source/case2_data.docx is not in the repository")
+
+
 GOLDEN_KEYS = (
     "constraints_parsed",
     "shift_reports",

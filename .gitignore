@@ -44,3 +44,6 @@ ml/data/
 .DS_Store
 .idea/
 .vscode/
+
+# Organisers' original case files are not published (kept locally only)
+data/case/source/

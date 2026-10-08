@@ -25,6 +25,7 @@ from support import (
     diff_json,
     golden,
     golden_differences,
+    require_case_docx,
 )
 from twin_core.config import TwinConfig
 from twin_core.importer import UploadedFile, run_import
@@ -42,8 +43,13 @@ def _zip(paths: tuple[Path, ...]) -> list[UploadedFile]:
     return [UploadedFile("case.zip", buffer.getvalue())]
 
 
+def _docx() -> list[UploadedFile]:
+    require_case_docx()
+    return _files(CASE_DOCX)
+
+
 VARIANTS = {
-    "docx": lambda: _files(CASE_DOCX),
+    "docx": lambda: _docx(),
     "xlsx": lambda: _files(CASE_XLSX),
     "csv": lambda: _files(*CASE_CSVS),
     "csv-reversed": lambda: _files(*reversed(CASE_CSVS)),
@@ -52,7 +58,6 @@ VARIANTS = {
 
 
 def test_case_fixtures_exist() -> None:
-    assert CASE_DOCX.is_file()
     assert CASE_XLSX.is_file()
     assert [p.name for p in CASE_CSVS] == [
         "01_lines.csv",
@@ -99,6 +104,7 @@ def test_tabular_constraints_fall_back_to_config(variant: str, cfg: TwinConfig) 
 
 
 def test_meta_source_names_the_upload(cfg: TwinConfig) -> None:
+    require_case_docx()
     report = run_import(VARIANTS["docx"](), cfg).to_json()
     assert report["meta"]["source"] == CASE_DOCX.name
     assert report["meta"]["kind"] == "docx"
