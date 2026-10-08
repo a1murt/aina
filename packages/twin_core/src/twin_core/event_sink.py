@@ -7,12 +7,14 @@ depend on where events go::
     sink = open_sink("memory:")                    # tests
     sink = open_sink("null:")                      # benchmarks
 
-Later stages register more schemes (e.g. ``db:`` — batched INSERT ... ON CONFLICT DO NOTHING)
-with :func:`register_sink`; ``make demo`` then runs ``qost_sim backfill --sink db:``.
+More schemes are registered with :func:`register_sink`. ``db:`` (``db:`` = ``DATABASE_URL``, or
+``db:postgresql+asyncpg://…``) is provided by :mod:`twin_core.db.sink` and imported lazily, so
+``qost_sim backfill --sink db:`` and the collector share one writer (idempotent by ``event_id``).
 """
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import IO, Protocol, runtime_checkable
@@ -104,12 +106,18 @@ register_sink("null", lambda _arg: NullSink())
 
 
 def sink_schemes() -> list[str]:
-    return sorted(_REGISTRY)
+    return sorted(set(_REGISTRY) | set(_LAZY))
+
+
+_LAZY = {"db": "twin_core.db.sink"}
+"""Schemes whose module registers itself on import (keeps asyncpg out of light imports)."""
 
 
 def open_sink(spec: str) -> EventSink:
     """Open a sink from ``scheme:argument`` (see the module docstring)."""
     scheme, sep, arg = spec.partition(":")
+    if sep and scheme not in _REGISTRY and scheme in _LAZY:
+        importlib.import_module(_LAZY[scheme])
     if not sep or scheme not in _REGISTRY:
         raise ValueError(f"unknown event sink {spec!r}; known schemes: {', '.join(sink_schemes())}")
     return _REGISTRY[scheme](arg)

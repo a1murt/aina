@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
@@ -126,7 +127,10 @@ def test_migrations_create_the_schema(db_url: URL) -> None:
         r["view_name"] for r in query(db_url, f"SELECT view_name FROM {info}.continuous_aggregates")
     }
     assert views == {"telemetry_15m", "telemetry_1h"}
-    assert query(db_url, "SELECT version_num FROM alembic_version") == [{"version_num": "0002"}]
+    head = ScriptDirectory.from_config(Config(str(REPO_ROOT / "services/api/alembic.ini")))
+    assert query(db_url, "SELECT version_num FROM alembic_version") == [
+        {"version_num": head.get_current_head()}
+    ]
 
 
 def test_docx_import_round_trip_and_idempotency(client: TestClient, db_url: URL) -> None:
