@@ -26,8 +26,11 @@ help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "} {printf "  %-13s %s\n", $$1, $$2}'
 
-.env:
-	cp .env.example .env
+.env: .env.example
+	@if [ ! -f .env ]; then cp .env.example .env; else \
+		for k in $$(grep -o '^[A-Z_][A-Z0-9_]*=' .env.example); do \
+			grep -q "^$$k" .env || { grep "^$$k" .env.example >> .env; echo "added $${k%=} to .env"; }; \
+		done; touch .env; fi
 
 # ------------------------------------------------------------------ stack
 
