@@ -17,6 +17,7 @@ import { useTranslations } from "next-intl";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { AlertsBell } from "@/components/alerts";
+import { COPILOT_ROLES, CopilotButton } from "@/components/copilot";
 import { LocaleSwitcher } from "@/components/locale-switcher";
 import { PlantProvider } from "@/components/plant-context";
 import { ConnectionBadge, PlantClock, SpeedBadge, ThemeToggle, UserMenu } from "@/components/shell/header-widgets";
@@ -86,6 +87,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     else setClaims(c);
   }, []);
   useLiveConnection(claims !== null);
+  const pathname = usePathname();
+  const copilot =
+    claims !== null && COPILOT_ROLES.includes(claims.role) && ["/director", "/live", "/maintenance", "/quality"].some((p) => pathname.startsWith(p));
 
   return (
     <PlantProvider>
@@ -101,6 +105,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Link>
               <Nav claims={claims} />
               <div className="ml-auto flex shrink-0 items-center gap-2.5">
+                {copilot ? <CopilotButton /> : null}
                 <PlantClock />
                 <SpeedBadge />
                 <ConnectionBadge />
