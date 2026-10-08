@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -247,6 +247,10 @@ async def _persist(
                     "value": stmt.excluded.value,
                     "severity": stmt.excluded.severity,
                     "message_ru": stmt.excluded.message_ru,
+                    # an import re-raises the finding (it wins over the events, §5.4), even if
+                    # the replayed history had closed an alert with the same key; ack is kept
+                    "status": case((AlertRow.status == "ack", "ack"), else_="open"),
+                    "resolved_ts": None,
                 },
             )
         )

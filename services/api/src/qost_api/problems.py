@@ -4,15 +4,20 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
+from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from twin_core.clock import ClockNotReadyError
 from twin_core.importer import ImportFormatError
 
 PROBLEM_JSON = "application/problem+json"
+_log = structlog.get_logger("qost_api.problems")
 _TYPE_BASE = "/problems/"
 
 
@@ -26,6 +31,7 @@ class ProblemError(Exception):
         detail: str | None = None,
         *,
         slug: str | None = None,
+        headers: dict[str, str] | None = None,
         **extensions: Any,
     ) -> None:
         super().__init__(detail or title)
@@ -33,6 +39,7 @@ class ProblemError(Exception):
         self.title = title
         self.detail = detail
         self.slug = slug
+        self.headers = headers
         self.extensions = extensions
 
 
@@ -62,7 +69,13 @@ def install_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(ProblemError)
     async def _problem(request: Request, exc: ProblemError) -> JSONResponse:
         return problem_response(
-            request, exc.status, exc.title, exc.detail, slug=exc.slug, **exc.extensions
+            request,
+            exc.status,
+            exc.title,
+            exc.detail,
+            slug=exc.slug,
+            headers=exc.headers,
+            **exc.extensions,
         )
 
     @app.exception_handler(StarletteHTTPException)
@@ -100,6 +113,43 @@ def install_problem_handlers(app: FastAPI) -> None:
             request, 503, "Plant clock is not available", str(exc), slug="clock-not-ready"
         )
 
+    async def _redis_down(request: Request, exc: Exception) -> JSONResponse:
+        _log.warning("redis_unavailable", path=request.url.path, error=str(exc)[:200])
+        return problem_response(
+            request, 503, "Live store is not available", "Redis is not reachable", slug="no-redis"
+        )
+
+    async def _db_down(request: Request, exc: Exception) -> JSONResponse:
+        _log.warning("database_unavailable", path=request.url.path, error=str(exc)[:200])
+        return problem_response(
+            request,
+            503,
+            "Database is not available",
+            "the database is not reachable",
+            slug="database-unavailable",
+        )
+
+    async def _io_down(request: Request, exc: Exception) -> JSONResponse:
+        _log.warning("backend_unreachable", path=request.url.path, error=str(exc)[:200])
+        return problem_response(
+            request,
+            503,
+            "Service Unavailable",
+            "a backing service (database or Redis) is not reachable",
+            slug="backend-unavailable",
+        )
+
+    async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
+        _log.exception("unhandled_error", path=request.url.path)
+        return problem_response(request, 500, "Internal Server Error", slug="internal")
+
+    app.add_exception_handler(RedisConnectionError, _redis_down)
+    app.add_exception_handler(RedisTimeoutError, _redis_down)
+    app.add_exception_handler(OSError, _io_down)
+    app.add_exception_handler(OperationalError, _db_down)
+    app.add_exception_handler(InterfaceError, _db_down)
+    app.add_exception_handler(Exception, _unexpected)
+
 
 _TITLES = {
     400: "Bad Request",
@@ -110,5 +160,8 @@ _TITLES = {
     409: "Conflict",
     413: "Payload Too Large",
     422: "Unprocessable Entity",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
     503: "Service Unavailable",
 }

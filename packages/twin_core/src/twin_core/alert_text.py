@@ -11,13 +11,16 @@ from typing import Any
 from twin_core.clock import to_plant_tz
 from twin_core.config import TwinConfig
 from twin_core.rules import (
+    AL_ANDON,
     AL_BUFFER,
     AL_CKD_COVERAGE,
     AL_DEFECT_RATE,
     AL_DOWNTIME_LIMIT,
     AL_EQUIPMENT_STOP,
+    AL_MATERIAL_CALL,
     AL_OEE_BELOW,
     AL_OEE_NEAR,
+    AL_PLAN_RISK,
     AL_SYSTEMIC_DEFECTS,
     Alert,
 )
@@ -114,6 +117,35 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
             f"{num(float(value.get('coverage_days', 0)), 1)} сут. плана "
             f"(норма ≥ {num(t.ckd_coverage_min_days)})"
         )
+    if alert.rule_id == AL_PLAN_RISK and isinstance(value, dict):
+        p = float(value.get("p", 0.0))
+        text = (
+            f"Вероятность выполнить план месяца {pct(p)}% "
+            f"(цель {num(float(value.get('target_qty', 0)), 0)} авто, {when})"
+        )
+        if "p50" in value:
+            text += f", медианный прогноз {num(float(value['p50']), 0)} авто"
+        return text
+    if alert.rule_id in (AL_ANDON, AL_MATERIAL_CALL) and isinstance(value, dict):
+        line = cfg.lines.get(alert.entity)
+        name = line.name_ru if line is not None else alert.entity
+        who = value.get("user")
+        if alert.rule_id == AL_ANDON:
+            text = f"{name}: андон — оператор вызывает мастера"
+            reason = cfg.reasons.get(str(value.get("reason_code")))
+            if reason is not None:
+                text += f" ({reason.name_ru.lower()})"
+            if value.get("equipment"):
+                text += f", {cfg.equipment[str(value['equipment'])].name_ru}"
+        else:
+            kit = cfg.products.get(str(value.get("product")))
+            what = f" ({kit.name})" if kit is not None else ""
+            text = f"{name}: нет комплектующих{what} — вызов материалов"
+        if int(value.get("count", 1) or 1) > 1:
+            text += f", вызовов: {value['count']}"
+        if value.get("comment"):
+            text += f". «{value['comment']}»"
+        return text + (f" [{who}]" if who else "")
     return f"{alert_title_ru(alert, cfg)}: {alert.entity} ({when})"
 
 

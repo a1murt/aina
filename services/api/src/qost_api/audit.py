@@ -24,7 +24,8 @@ def audit(
 ) -> AuditLog:
     """Add an ``audit_log`` row to the session (committed with the change it describes).
 
-    ``after`` carries the acting user name under ``"by"`` while users have no DB ids (M4).
+    ``user_id`` is the caller's ``app_user.id`` (from the token); ``after`` also carries the user
+    name and role under ``"by"`` / ``"role"`` so entries stay readable without a join.
     """
     payload = dict(after or {})
     payload.setdefault("by", principal.username)
