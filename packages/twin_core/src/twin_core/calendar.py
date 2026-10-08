@@ -7,6 +7,7 @@ shift starts (a shift crossing midnight belongs to the day it started).
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -172,3 +173,66 @@ class PlantCalendar:
 
     def local_time(self, instant: datetime) -> time:
         return ensure_utc(instant).astimezone(self.tz).time()
+
+
+class WorkingTime:
+    """Cumulative working time over the working shifts around an anchor instant.
+
+    Wear-like signals (filter pressure drop, chain elongation) move only while the plant works,
+    so trends are fitted on the working-time axis: nights, weekends and holidays collapse.
+    ``working_seconds(t)`` grows inside working shifts and stays flat between them;
+    ``instant_at(w)`` is its inverse (``None`` beyond the built horizon).
+    """
+
+    def __init__(
+        self,
+        calendar: PlantCalendar,
+        anchor: datetime,
+        *,
+        back_days: int = 4,
+        ahead_days: int = 60,
+    ) -> None:
+        moment = ensure_utc(anchor)
+        shifts = [
+            s
+            for s in calendar.materialize(
+                calendar.local_date(moment) - timedelta(days=back_days),
+                calendar.local_date(moment) + timedelta(days=ahead_days),
+            )
+            if s.working
+        ]
+        shifts.sort(key=lambda s: s.start)
+        self._starts = [s.start.timestamp() for s in shifts]
+        self._ends = [s.end.timestamp() for s in shifts]
+        self._cum: list[float] = []
+        total = 0.0
+        for a, b in zip(self._starts, self._ends, strict=True):
+            self._cum.append(total)
+            total += b - a
+        self.first = shifts[0].start if shifts else moment
+        self.last = shifts[-1].end if shifts else moment
+
+    def working_seconds(self, instant: datetime) -> float:
+        """Working seconds from the first built shift up to ``instant``."""
+        t = ensure_utc(instant).timestamp()
+        i = bisect.bisect_right(self._starts, t) - 1
+        if i < 0:
+            return 0.0
+        return self._cum[i] + max(0.0, min(t, self._ends[i]) - self._starts[i])
+
+    def is_working(self, instant: datetime) -> bool:
+        t = ensure_utc(instant).timestamp()
+        i = bisect.bisect_right(self._starts, t) - 1
+        return i >= 0 and t < self._ends[i]
+
+    def instant_at(self, work_seconds: float) -> datetime | None:
+        """The instant at which the cumulative working time reaches ``work_seconds``."""
+        if not self._starts or work_seconds < 0:
+            return None
+        i = bisect.bisect_right(self._cum, work_seconds) - 1
+        if i < 0:
+            return None
+        offset = work_seconds - self._cum[i]
+        if i == len(self._starts) - 1 and offset > self._ends[i] - self._starts[i]:
+            return None
+        return datetime.fromtimestamp(self._starts[i] + offset, tz=UTC)

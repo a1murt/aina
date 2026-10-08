@@ -185,27 +185,60 @@ def history_from_records(
     — completed stops at least since the last planned maintenance; ``exits`` — the line's first
     exits since then. Extra (older or later) records are harmless.
     """
+    return history_from_arrays(
+        equipment,
+        spec=spec,
+        until_us=to_us(until),
+        telemetry={
+            code: (np.array([to_us(t) for t in ts], dtype=np.int64), np.asarray(vals, np.float64))
+            for code, (ts, vals) in telemetry.items()
+        },
+        stop_start_us=[to_us(s.start) for s in stops],
+        stop_end_us=[to_us(s.end) for s in stops],
+        stop_states=[s.state for s in stops],
+        stop_reasons=[s.reason for s in stops],
+        exits_us=np.array([to_us(e) for e in exits], dtype=np.int64),
+    )
+
+
+def history_from_arrays(
+    equipment: str,
+    *,
+    spec: PdmSpec,
+    until_us: int,
+    telemetry: Mapping[str, tuple[I64, F64]],
+    stop_start_us: Sequence[int] | I64,
+    stop_end_us: Sequence[int] | I64,
+    stop_states: Sequence[str],
+    stop_reasons: Sequence[str | None],
+    exits_us: Sequence[int] | I64,
+) -> UnitHistory:
+    """:func:`history_from_records` on microsecond arrays (the engine keeps its cache this way)."""
     equipment_type, _line = spec.equipment[equipment]
     step = spec.grid_s * US
-    t_us = floor_to_grid(to_us(until), spec.grid_s)
+    t_us = floor_to_grid(until_us, spec.grid_s)
     grid0 = t_us - spec.max_window_h * _HOUR_US
     n_slots = (t_us - grid0) // step
     values: dict[str, F64] = {}
     for sig in spec.types[equipment_type].signals:
-        ts, vals = telemetry.get(sig.code, ((), ()))
-        values[sig.code] = to_grid(
-            [to_us(t) for t in ts], list(vals), grid0_us=grid0, n_slots=n_slots, grid_s=spec.grid_s
-        )
+        ts, vals = telemetry.get(sig.code, (np.empty(0, np.int64), np.empty(0, np.float64)))
+        values[sig.code] = to_grid(ts, vals, grid0_us=grid0, n_slots=n_slots, grid_s=spec.grid_s)
     classified = classify_stops(
-        [to_us(s.start) for s in stops],
-        [to_us(s.end) for s in stops],
-        [s.state for s in stops],
-        [s.reason for s in stops],
+        stop_start_us,
+        stop_end_us,
+        stop_states,
+        stop_reasons,
         spec=spec,
         equipment_type=equipment_type,
     )
-    exits_us = np.sort(np.array([to_us(e) for e in exits], dtype=np.int64))
-    return UnitHistory(equipment, equipment_type, grid0, values, classified, exits_us)
+    return UnitHistory(
+        equipment,
+        equipment_type,
+        grid0,
+        values,
+        classified,
+        np.sort(np.asarray(exits_us, np.int64)),
+    )
 
 
 def floor_to_grid(t_us: int, grid_s: int) -> int:

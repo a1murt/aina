@@ -143,6 +143,16 @@ class OpenAlert:
 
 
 @dataclass
+class SpcPoint:
+    """One closed shift of an area on its p-chart (SPEC §11.3)."""
+
+    key: str
+    defects: int
+    n: int
+    special: bool = False
+
+
+@dataclass
 class CoreState:
     entities: dict[str, Entity] = field(default_factory=dict)
     stops: dict[str, Stop] = field(default_factory=dict)
@@ -168,3 +178,9 @@ class CoreState:
     late_events: int = 0
     dropped_units: int = 0
     events: int = 0
+    health: dict[str, dict[str, float | None]] = field(default_factory=dict)
+    """Unit -> latest PdM result ``{health_index, p_failure, ts}`` (M7b)."""
+    pdm_last: float | None = None
+    """Plant time of the last PdM tick."""
+    spc: dict[str, list[SpcPoint]] = field(default_factory=dict)
+    """Area -> recent closed shifts for the p-chart."""

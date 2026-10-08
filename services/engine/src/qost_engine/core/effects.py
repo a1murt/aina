@@ -198,6 +198,23 @@ class ReclassifyRequest:
         return ("reclassify", self.entity, self.start.isoformat(), self.ts.isoformat())
 
 
+@dataclass(frozen=True, slots=True)
+class PredictionRow:
+    """Row of ``prediction`` (upsert by equipment + horizon + ts): PdM serving, SPEC §11.1."""
+
+    equipment: str
+    ts: datetime
+    horizon_h: float
+    p_failure: float
+    health_index: float
+    model_version: str
+    top_factors: list[dict[str, Any]]
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        return ("prediction", self.equipment, self.ts.isoformat(), repr(self.horizon_h))
+
+
 Effect = (
     StateInterval
     | DowntimeRow
@@ -208,6 +225,7 @@ Effect = (
     | DqUpsert
     | AuditRow
     | ReclassifyRequest
+    | PredictionRow
 )
 
 

@@ -125,7 +125,6 @@ services:
     command: ["python", "-m", "qost_engine"]
     volumes:
       - ./config:/app/config:ro
-      - ml-models:/app/ml/models
     stop_grace_period: 20s   # final commit + checkpoint on SIGTERM
     healthcheck:
       # ready = checkpoint restored, consumer group attached, live view rebuilt
@@ -144,7 +143,6 @@ services:
       - "8000:8000"
     volumes:
       - ./config:/app/config:ro
-      - ml-models:/app/ml/models
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       <<: *healthcheck-timing
@@ -187,4 +185,3 @@ services:
 volumes:
   pgdata:
   collector-spool:
-  ml-models:
