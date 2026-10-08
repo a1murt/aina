@@ -19,7 +19,8 @@ HOST_REDIS_URL ?= redis://localhost:6379/0
 export NEXT_TELEMETRY_DISABLED := 1
 
 .PHONY: help up down ps logs check test fmt py-lint py-type py-test web-check web-install \
-	migrate config-check seed demo demo-reset tagmap ml-dataset ml-train history forecast-validate
+	migrate config-check seed demo demo-reset demo-down tagmap ml-dataset ml-train history \
+	forecast-validate
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -81,10 +82,10 @@ fmt: ## format Python and apply safe lint fixes
 config-check: ## validate config/*.yaml (and the tag map, if present)
 	$(UV) run python -m twin_core.config
 
-# ------------------------------------------------------------------ later stages
+# ------------------------------------------------------------------ data and demo
 
-seed: ## users of all roles, reference data, calendar, plan (M4)
-	@echo "make seed: not implemented until M4"
+seed: ## users of all roles, reference tables, shift calendar, plan (FR-DB-01; after migrate)
+	DATABASE_URL=$(HOST_DATABASE_URL) $(UV) run --package qost-api python -m qost_api seed
 
 history: ## sim backfill 01.09 -> demo_start into the DB, then the engine recomputes it (run after migrate)
 	DATABASE_URL=$(HOST_DATABASE_URL) $(UV) run --package qost-sim \
@@ -92,11 +93,16 @@ history: ## sim backfill 01.09 -> demo_start into the DB, then the engine recomp
 	DATABASE_URL=$(HOST_DATABASE_URL) REDIS_URL=$(HOST_REDIS_URL) $(UV) run --package qost-engine \
 		python -m qost_engine replay
 
-demo: ## migrations -> seed -> backfill -> case import -> live (M4)
-	@echo "make demo: not implemented until M4"
+demo: .env ## build -> infra -> migrations -> seed -> history -> case import -> live (NFR-08; DEMO_FRESH=1: empty demo data)
+	COMPOSE="$(COMPOSE)" bash infra/demo.sh
 
-demo-reset: ## reset the live tail to demo_start (M4/M9)
-	@echo "make demo-reset: not implemented until M4"
+demo-reset: ## reset the live tail to demo_start (sim reset handshake; engine drops the tail, history kept)
+	$(COMPOSE) --profile demo exec -T sim python -c "import urllib.request as u; \
+		r = u.Request('http://127.0.0.1:8100/reset', data=b'{}', method='POST', \
+		headers={'Content-Type': 'application/json'}); print(u.urlopen(r, timeout=60).read().decode())"
+
+demo-down: ## stop the demo services (infrastructure keeps running)
+	$(COMPOSE) --profile demo stop sim collector engine api notifier web
 
 tagmap: ## generate config/tag_map.demo.yaml from the OPC UA address space (M2)
 	$(UV) run --package qost-sim python -m qost_sim tagmap --out config/tag_map.demo.yaml

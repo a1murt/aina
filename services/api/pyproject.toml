@@ -11,6 +11,10 @@ dependencies = [
     "asyncpg>=0.30",
     "alembic>=1.14",
     "python-multipart>=0.0.20",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.9",
+    "httpx2>=2.13.1",
+    "redis>=5.2",
 ]
 
 [project.scripts]

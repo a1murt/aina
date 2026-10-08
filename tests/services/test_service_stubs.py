@@ -44,24 +44,24 @@ async def test_health_server_endpoints() -> None:
 
 
 def test_api_health_and_schema(cfg: TwinConfig) -> None:
-    with TestClient(create_app(cfg)) as client:
+    with TestClient(create_app(cfg, database_url=None, redis=None)) as client:
         assert client.get("/healthz").json() == {"status": "ok", "service": "api"}
         assert client.get("/readyz").json()["site"] == "KST"
         assert client.get("/api/openapi.json").status_code == 200
 
 
-def test_api_docs_disabled_offline(cfg: TwinConfig, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_docs_work_offline(cfg: TwinConfig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """M4: Swagger UI assets are served locally, so /api/docs is on even with OFFLINE=true."""
     monkeypatch.setenv("OFFLINE", "true")
-    with TestClient(create_app(cfg)) as client:
-        assert client.get("/api/docs").status_code == 404
-    monkeypatch.setenv("OFFLINE", "false")
-    with TestClient(create_app(cfg)) as client:
-        assert client.get("/api/docs").status_code == 200
+    with TestClient(create_app(cfg, database_url=None, redis=None)) as client:
+        html = client.get("/api/docs").text
+        assert "/api/docs/assets/swagger-ui-bundle.js" in html
+        assert "http" not in html.split("<body>")[-1].replace("http-equiv", "")
 
 
 def test_api_loads_config_at_startup(monkeypatch: pytest.MonkeyPatch, config_dir: object) -> None:
     monkeypatch.setenv("PLANT_CONFIG_DIR", str(config_dir))
-    with TestClient(create_app()) as client:
+    with TestClient(create_app(database_url=None, redis=None)) as client:
         assert client.get("/readyz").status_code == 200
 
 
