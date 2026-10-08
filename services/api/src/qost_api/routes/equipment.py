@@ -1,8 +1,9 @@
 """``GET /equipment/{code}/health`` and ``/equipment/{code}/telemetry`` — all roles (§12.2).
 
-* health: live state (engine view), latest PdM prediction (``prediction``; ``null`` until the
-  engine serves models, M7b), last value of every signal with its threshold status, MTBF/MTTR
-  over the last 30 days of working shifts, the open stop.
+* health: live state (engine view), latest PdM prediction (``prediction``: p_failure, health
+  index, top factors as texts; ``null`` until the engine has served the unit), AL-M2 limit
+  forecasts of the unit's signals with a ``limit_hi`` (``limits``), last value of every signal
+  with its threshold status, MTBF/MTTR over the last 30 days of working shifts, the open stop.
 * telemetry: ``agg=raw`` (``telemetry``), ``15m`` / ``1h`` (continuous aggregates
   ``telemetry_15m`` / ``telemetry_1h``: avg, min, max, last, n) or ``auto`` (raw ≤ 6 h,
   15 min ≤ 3 days, else 1 h). Points are ``[ts, avg, min, max]`` (raw: value three times).
@@ -23,6 +24,8 @@ from qost_api.db import Session
 from qost_api.deps import Config, PlantClock, live_keys, window
 from qost_api.problems import ProblemError
 from qost_api.queries.kpi import equipment_rows
+from qost_api.queries.limits import limit_forecasts
+from qost_api.routes.predictions import factor_texts, principal_lang
 from twin_core.config import Signal, TwinConfig
 
 router = APIRouter(prefix="/api/v1/equipment", tags=["equipment"])
@@ -133,8 +136,11 @@ async def get_health(
             "horizon_h": pred["horizon_h"],
             "p_failure": pred["p_failure"],
             "model_version": pred["model_version"],
+            "health_index": pred["health_index"],
             "top_factors": pred["top_factors"],
+            "factors": factor_texts(pred["top_factors"], principal_lang(principal)),
         },
+        "limits": await limit_forecasts(session, cfg, code, now),
         "signals": [
             {
                 **s.model_dump(mode="json"),

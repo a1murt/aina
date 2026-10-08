@@ -51,6 +51,7 @@ DATA_TABLES = (
     "kpi_shift",
     "bottleneck_shift",
     "alert_notification",
+    "prediction",
     "alert",
     "dq_issue",
     "engine_checkpoint",
