@@ -252,5 +252,36 @@ async def test_s3_and_s2_through_the_engine_and_the_api(
         assert r.json()["events"]
         assert client.get("/api/v1/bodies/NOPE", headers=bearer("master")).status_code == 404
         assert client.get("/api/v1/bodies/x", headers=bearer("director")).status_code == 403
+        # copilot (LLM_PROVIDER=none → deterministic answers from the real tools)
+        r = client.post(
+            "/api/v1/copilot/ask",
+            json={"question": "Какова вероятность отказа ABB-04?"},
+            headers=bearer("maintenance"),
+        )
+        assert r.status_code == 200, r.text
+        ask_body = r.json()
+        assert ask_body["mode"] == "offline"
+        assert ask_body["tool_calls"][0]["name"] == "get_equipment_health"
+        assert "вероятность отказа в ближайшие 8 ч" in ask_body["answer"]
+        assert "ABB-04" in ask_body["basis"]["entities"]
+        r = client.post(
+            "/api/v1/copilot/ask",
+            json={"question": "Какой OEE у Окраски-1 за 15.10?"},
+            headers=bearer("director"),
+        )
+        assert r.status_code == 200, r.text
+        assert "OEE" in r.json()["answer"]
+        r = client.post(
+            "/api/v1/copilot/ask",
+            json={"question": "Что такое тёмная материя?"},
+            headers=bearer("quality"),
+        )
+        assert r.json()["refused"]
+    logged = await query(db_url, "SELECT role, mode, refused FROM copilot_log ORDER BY id")
+    assert [(x["role"], x["mode"], x["refused"]) for x in logged] == [
+        ("maintenance", "offline", False),
+        ("director", "offline", False),
+        ("quality", "offline", True),
+    ]
     audit = await query(db_url, "SELECT action FROM audit_log WHERE action LIKE 'work_order.%'")
     assert {a["action"] for a in audit} == {"work_order.create", "work_order.update"}
