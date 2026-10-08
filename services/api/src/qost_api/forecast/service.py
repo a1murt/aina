@@ -262,6 +262,28 @@ class ForecastService:
         run_id = await self.backend.save_run(record, principal=principal)
         return _view(run_id, record, result)
 
+    async def outlook(self, month: str | None, principal: Principal) -> ForecastResult:
+        """Baseline forecast of a month without storing a run (shift reports, M8).
+
+        Same calibration, state, seed and run count as ``POST /forecast``; the baseline paths go
+        to the cache, so a later what-if of the director computes only its scenario.
+        """
+        now = self.clock.now()
+        chosen = self._month(month, now)
+        n_runs = self._runs(None)
+        seed = default_seed(self.cfg)
+        prepared = await self._prepare(chosen, principal)
+        ctx = prepared.ctx
+
+        def work() -> tuple[ForecastResult, Paths]:
+            result, paths, _ = forecast(ctx, None, n_runs=n_runs, seed=seed, compare=False)
+            return result, paths
+
+        result, paths = await to_thread.run_sync(work, limiter=self._limiter)
+        key = (chosen, prepared.calibration.id, ctx.state.digest(), seed, n_runs)
+        self._remember(self._base, key, paths, _BASE_CACHE)
+        return result
+
     async def get(self, run_id: int) -> ForecastRunView | None:
         stored: StoredRun | None = await self.backend.get_run(run_id)
         if stored is None:
