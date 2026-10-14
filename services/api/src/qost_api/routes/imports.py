@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 
 from qost_api.auth import Principal, require_roles
 from qost_api.db import Session
-from qost_api.imports import create_import, get_job, job_view
+from qost_api.imports import ANALYSIS_KEY, create_import, get_job, job_view, reanalyse_import
 from qost_api.problems import ProblemError
 from qost_api.settings import ApiSettings
 from twin_core.clock import Clock
@@ -44,13 +44,25 @@ async def import_template(request: Request, principal: Importer) -> Response:
     "",
     status_code=status.HTTP_201_CREATED,
     summary="Import .docx / .xlsx / .csv files (FR-IMP-01..06)",
-    responses={200: {"description": "Same content imported before: the stored result"}},
+    responses={
+        200: {
+            "description": "Same content imported before: the stored result; or, with "
+            "reanalyse=true, the result of a fresh analysis that wrote no data"
+        }
+    },
 )
 async def post_import(
     request: Request,
     principal: Importer,
     session: Session,
     files: Annotated[list[UploadFile], File(description="one .docx, one .xlsx, or .csv/.txt/.zip")],
+    reanalyse: Annotated[
+        bool,
+        Query(
+            description="parse the upload again without writing data (the stored job, if any, "
+            "is kept); the body adds reanalysed=true and the duration of this analysis"
+        ),
+    ] = False,
 ) -> JSONResponse:
     settings: ApiSettings = request.app.state.settings
     uploads: list[UploadedFile] = []
@@ -67,11 +79,20 @@ async def post_import(
             )
         uploads.append(UploadedFile(upload.filename or "upload", content))
     clock: Clock = request.app.state.clock
+    if reanalyse:
+        fresh = await reanalyse_import(
+            session, uploads, cfg=request.app.state.config, clock=clock, principal=principal
+        )
+        job_id = fresh["job"]["id"]
+        headers = {"Location": f"{router.prefix}/{job_id}"} if job_id is not None else None
+        return JSONResponse(fresh, status_code=status.HTTP_200_OK, headers=headers)
     outcome = await create_import(
         session, uploads, cfg=request.app.state.config, clock=clock, principal=principal
     )
     body: dict[str, Any] = job_view(outcome.job)
     body["job"]["created"] = outcome.created
+    if outcome.analysis_ms is not None:
+        body[ANALYSIS_KEY] = outcome.analysis_ms
     return JSONResponse(
         body,
         status_code=status.HTTP_201_CREATED if outcome.created else status.HTTP_200_OK,

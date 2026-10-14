@@ -9,11 +9,17 @@ by ``dedup_key``) and an ``audit_log`` entry.
 Idempotency (FR-IMP-06): the upload digest is the sha256 of the file; for several files, the
 sha256 of their sorted per-file digests (names do not matter). A repeated digest returns the
 stored job without writing anything.
+
+``analysis_ms`` is the duration of the analysis (parsing, reconciliation, DQ, alerts) of the
+first import, stored with the report; a repeated upload answers with that original duration.
+``reanalyse`` parses an upload again without writing data (only the audit entry) and returns the
+same body with the duration of this run (DEMO-9: the import step shows a real parse).
 """
 
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -41,6 +47,7 @@ from twin_core.db import (
 from twin_core.importer import ImportReport, UploadedFile, run_import
 
 IMPORT_SOURCE = "import"
+ANALYSIS_KEY = "analysis_ms"
 
 
 def upload_digest(files: Sequence[UploadedFile]) -> str:
@@ -58,11 +65,14 @@ def upload_name(files: Sequence[UploadedFile]) -> str:
 class ImportOutcome:
     job: ImportJob
     created: bool
+    analysis_ms: float | None = None
+    """Duration of the original analysis (measured again for a job stored without it)."""
 
 
 def job_view(job: ImportJob) -> dict[str, Any]:
     """The API body of an import: the stored report plus the job description."""
     body = dict(job.result or {})
+    body.setdefault(ANALYSIS_KEY, None)
     body["job"] = {
         "id": job.id,
         "filename": job.filename,
@@ -72,6 +82,13 @@ def job_view(job: ImportJob) -> dict[str, Any]:
         "created_ts": job.created_ts.isoformat(),
     }
     return body
+
+
+def analyse(files: Sequence[UploadedFile], cfg: TwinConfig) -> tuple[ImportReport, float]:
+    """Run the import pipeline without writing anything: ``(report, duration in ms)``."""
+    started = time.perf_counter()
+    report = run_import(files, cfg, source=upload_name(files))
+    return report, round((time.perf_counter() - started) * 1000.0, 1)
 
 
 # --------------------------------------------------------------------------- persistence
@@ -280,9 +297,12 @@ async def create_import(
     digest = upload_digest(files)
     existing = await find_job(session, digest)
     if existing is not None:
-        return ImportOutcome(existing, created=False)
+        stored = (existing.result or {}).get(ANALYSIS_KEY)
+        if stored is None:  # a job imported before the duration was stored
+            stored = analyse(files, cfg)[1]
+        return ImportOutcome(existing, created=False, analysis_ms=stored)
     name = upload_name(files)
-    report = run_import(files, cfg, source=name)
+    report, analysis_ms = analyse(files, cfg)
     now = clock.now()
     job = ImportJob(
         filename=name,
@@ -291,7 +311,7 @@ async def create_import(
         status="done",
         created_by=principal.user_id,
         created_ts=now,
-        result=report.to_json(),
+        result={**report.to_json(), ANALYSIS_KEY: analysis_ms},
     )
     session.add(job)
     try:
@@ -310,6 +330,7 @@ async def create_import(
                 "kind": job.kind,
                 "period": report.meta["period"],
                 "rows": counts,
+                ANALYSIS_KEY: analysis_ms,
             },
         )
         await session.commit()
@@ -319,8 +340,63 @@ async def create_import(
         winner = await find_job(session, digest)
         if winner is None:
             raise
-        return ImportOutcome(winner, created=False)
-    return ImportOutcome(job, created=True)
+        return ImportOutcome(
+            winner, created=False, analysis_ms=(winner.result or {}).get(ANALYSIS_KEY)
+        )
+    return ImportOutcome(job, created=True, analysis_ms=analysis_ms)
+
+
+async def reanalyse_import(
+    session: AsyncSession,
+    files: Sequence[UploadedFile],
+    *,
+    cfg: TwinConfig,
+    clock: Clock,
+    principal: Principal,
+) -> dict[str, Any]:
+    """Parse an upload again without writing any data; the body of a normal import response
+    plus ``reanalysed: true`` and the duration of this run. The job is the stored one when the
+    same content was imported before. The action itself goes to the audit log.
+
+    Raises :class:`twin_core.importer.ImportFormatError` for files that cannot be imported.
+    """
+    digest = upload_digest(files)
+    name = upload_name(files)
+    report, analysis_ms = analyse(files, cfg)
+    existing = await find_job(session, digest)
+    now = clock.now()
+    body: dict[str, Any] = report.to_json()
+    if existing is not None:
+        body["job"] = {**job_view(existing)["job"], "created": False}
+    else:
+        body["job"] = {
+            "id": None,
+            "filename": name,
+            "sha256": digest,
+            "kind": report.meta["kind"],
+            "status": "reanalysed",
+            "created_ts": now.isoformat(),
+            "created": False,
+        }
+    body["reanalysed"] = True
+    body[ANALYSIS_KEY] = analysis_ms
+    audit(
+        session,
+        ts=now,
+        principal=principal,
+        action="import.reanalyse",
+        entity_type="import_job",
+        entity_id=str(existing.id) if existing is not None else None,
+        after={
+            "filename": name,
+            "sha256": digest,
+            "kind": report.meta["kind"],
+            "period": report.meta["period"],
+            ANALYSIS_KEY: analysis_ms,
+        },
+    )
+    await session.commit()
+    return body
 
 
 async def get_job(session: AsyncSession, import_id: int) -> ImportJob | None:
