@@ -31,9 +31,10 @@ async def start_health_server(
     host: str = "0.0.0.0",
     ready: Callable[[], bool] | None = None,
     stats: Callable[[], dict[str, object]] | None = None,
+    reasons: Callable[[], list[str]] | None = None,
 ) -> asyncio.Server:
-    """Serve ``GET /healthz`` (liveness), ``GET /readyz`` (readiness) and, when ``stats`` is
-    given, ``GET /stats`` (service counters) as JSON."""
+    """Serve ``GET /healthz`` (liveness), ``GET /readyz`` (readiness; a 503 lists ``reasons()``
+    as ``not_ready``) and, when ``stats`` is given, ``GET /stats`` (service counters) as JSON."""
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -53,6 +54,8 @@ async def start_health_server(
                 is_ready = ready() if ready is not None else True
                 status = 200 if is_ready else 503
                 payload = {"status": "ready" if is_ready else "not ready", "service": service}
+                if not is_ready and reasons is not None:
+                    payload["not_ready"] = reasons()
             elif path == "/stats" and stats is not None:
                 status, payload = 200, {"service": service, **stats()}
             else:

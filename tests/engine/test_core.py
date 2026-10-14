@@ -34,6 +34,7 @@ from qost_engine.core import (
 )
 from qost_engine.writer import coalesce
 from twin_core.config import TwinConfig
+from twin_core.rules import Alert
 
 
 def latest_alerts(effects: Sequence[object]) -> dict[str, AlertUpsert]:
@@ -333,3 +334,218 @@ def test_old_stop_reclassification_goes_to_the_writer(cfg: TwinConfig) -> None:
     assert requests[0].reason_code == "ME-CHAIN"
     assert requests[0].planned is False
     assert requests[0].user == "master1"
+
+
+def _b1(severity: str, level: int) -> Alert:
+    return Alert(
+        "AL-B1",
+        severity,  # type: ignore[arg-type]
+        "buffer",
+        "EOL",
+        SHIFT_A.date(),
+        {"level": level, "capacity": 10, "direction": "low"},
+        None,
+        "2026-10-16T02:30:00Z",
+    )
+
+
+def test_escalation_survives_downgrade_after_first_escalation(cfg: TwinConfig) -> None:
+    """STAB-1: critical -> escalated once -> warning (shorter chain) must not overflow."""
+    core = EngineCore(cfg, mode="live")
+    t0 = at(30)
+    core.advance_to(t0)
+    core.drain()
+    core._raise(_b1("critical", 0), t0.timestamp())
+    core.advance_to(t0 + timedelta(minutes=11))
+    first = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in first] == [(1, ("maintenance",))]
+    core._raise(_b1("warning", 1), (t0 + timedelta(minutes=12)).timestamp())
+    core.advance_to(t0 + timedelta(minutes=42))  # past both timeouts: no IndexError, no escalation
+    assert not of_type(core.drain()[0], AlertEscalate)
+    assert core.st.alerts[_b1("warning", 1).dedup_key].escalation_due is None
+
+
+def test_escalation_continues_after_upgrade_from_end_of_warning_chain(cfg: TwinConfig) -> None:
+    """STAB-1: warning at the end of its chain -> critical keeps escalating (critical chain)."""
+    core = EngineCore(cfg, mode="live")
+    t0 = at(30)
+    core.advance_to(t0)
+    core.drain()
+    core._raise(_b1("warning", 1), t0.timestamp())
+    core.advance_to(t0 + timedelta(minutes=31))
+    first = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in first] == [(1, ("director",))]
+    core.advance_to(t0 + timedelta(minutes=70))
+    assert not of_type(core.drain()[0], AlertEscalate)  # end of the warning chain
+    up = t0 + timedelta(minutes=71)
+    core._raise(_b1("critical", 0), up.timestamp())
+    core.advance_to(up + timedelta(minutes=11))
+    escalated = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in escalated] == [(2, ("director",))]
+    core.advance_to(up + timedelta(minutes=60))
+    assert not of_type(core.drain()[0], AlertEscalate)
+
+
+def test_escalation_upgrade_from_warning_level0_takes_earlier_due(cfg: TwinConfig) -> None:
+    core = EngineCore(cfg, mode="live")
+    t0 = at(30)
+    core.advance_to(t0)
+    core.drain()
+    core._raise(_b1("warning", 1), t0.timestamp())
+    core._raise(_b1("critical", 0), (t0 + timedelta(minutes=5)).timestamp())
+    core.advance_to(t0 + timedelta(minutes=16))
+    escalated = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in escalated] == [(1, ("maintenance",))]
+
+
+def test_s1_open_stop_text_and_impact_refresh_every_plant_minute(cfg: TwinConfig) -> None:
+    """VIS-1/DEMO-2: AL-S1 at 0 min shows the per-minute estimate; refreshed every minute."""
+    assert cfg.rules.engine.alert_impact_refresh_min == 1
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    effects = run(core, [state("CONV-03", "DOWN_UNPLANNED", at(10), alarm_code="ME-CHAIN")])
+    s1 = [a for a in of_type(effects, AlertUpsert) if a.rule_id == "AL-S1"]
+    assert "влияни" not in s1[-1].message_ru
+    assert s1[-1].message_ru.endswith("оценка: ≈ 0,26 авто за каждую минуту простоя")
+    core.advance_to(at(11))
+    s1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-S1"]
+    assert s1[-1].value["elapsed_min"] == pytest.approx(1.0)
+    assert "потеря ≈ 0,3 авто" in s1[-1].message_ru
+    core.advance_to(at(65))
+    s1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-S1"]
+    assert "потеря ≈ 14,2 авто" in s1[-1].message_ru
+
+
+def test_live_e_and_oee_hidden_for_the_first_30_minutes_of_apt(cfg: TwinConfig) -> None:
+    """STAB-10: bodies started in the previous shift make E > 1 on a short APT (07:15)."""
+    assert cfg.rules.engine.live_kpi_min_apt_min == 30
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    run(core, [unit("PAINT-1", at(1 + k), n=k) for k in range(16)])
+
+    def paint(now_min: float) -> dict[str, object]:
+        msgs = core.live_kpi(at(now_min))
+        return next(m for m in msgs if m.type == "kpi" and m.data.get("code") == "PAINT-1").data
+
+    early = paint(20)
+    assert early["effectiveness"] is None
+    assert early["oee"] is None
+    assert early["pq"] == 16
+    later = paint(31)
+    assert later["effectiveness"] is not None
+    assert later["oee"] is not None
+
+
+def test_b1_severity_hysteresis_up_at_once_down_after_the_debounce(cfg: TwinConfig) -> None:
+    """STAB-6: an AL-B1 flapping critical <-> warning does not re-issue on every flip."""
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    run(core, [buffer("PBS", 0, at(100))])
+    core.advance_to(at(106))
+    b1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-B1"]
+    assert b1[-1].severity == "critical"
+    # flapping 1 <-> 0 every 30 s for 4 min: no upsert at all
+    flaps = [buffer("PBS", 1 if k % 2 == 0 else 0, at(106 + k * 0.5)) for k in range(8)]
+    effects = run(core, flaps)
+    core.advance_to(at(110.5))
+    effects += core.drain()[0]
+    assert not [a for a in of_type(effects, AlertUpsert) if a.rule_id == "AL-B1"]
+    # a lower severity that holds for alert_debounce_s (5 min) is applied
+    run(core, [buffer("PBS", 1, at(111))])
+    core.advance_to(at(115))
+    assert not [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-B1"]
+    core.advance_to(at(116.5))
+    b1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-B1"]
+    assert [a.severity for a in b1] == ["warning"]
+    # back up to critical: at once
+    effects = run(core, [buffer("PBS", 0, at(117))])
+    core.advance_to(at(117.1))
+    effects += core.drain()[0]
+    b1 = [a for a in of_type(effects, AlertUpsert) if a.rule_id == "AL-B1"]
+    assert [a.severity for a in b1] == ["critical"]
+
+
+def test_oee_projection_reissue_parameters(cfg: TwinConfig) -> None:
+    params = cfg.rules.engine
+    assert params.oee_alert_reissue_delta == pytest.approx(0.01)
+    assert params.oee_alert_reissue_min == pytest.approx(5)
+
+
+def test_b1_reactivation_does_not_reuse_a_stale_downgrade_hold(cfg: TwinConfig) -> None:
+    """A downgrade started before a resolve must hold the full debounce after re-activation."""
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    run(core, [buffer("PBS", 0, at(100))])
+    core.advance_to(at(106))
+    assert [a.severity for a in latest_alerts(core.drain()[0]).values()] == ["critical"]
+    run(core, [buffer("PBS", 1, at(107))])  # a lower severity starts holding ...
+    run(core, [buffer("PBS", 15, at(108))])  # ... then the condition clears
+    core.advance_to(at(114))
+    assert [a.status for a in of_type(core.drain()[0], AlertUpsert)] == ["resolved"]
+    run(core, [buffer("PBS", 0, at(115))])
+    # the timer activates critical at 120:00, and the first evaluation after it is a warning
+    effects = run(core, [buffer("PBS", 1, at(120))])
+    assert [a.severity for a in of_type(effects, AlertUpsert)] == ["critical"]
+    core.advance_to(at(124.9))
+    assert not of_type(core.drain()[0], AlertUpsert)  # held: the stale 107 hold is not reused
+    core.advance_to(at(125.1))
+    assert [a.severity for a in of_type(core.drain()[0], AlertUpsert)] == ["warning"]
+
+
+def test_oee_projection_dwell_and_reissue(cfg: TwinConfig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """STAB-6: AL-O1/O2 of the running shift. O1 -> O2 / O1 -> none wait the dwell from the
+    last upsert, O2 -> O1 is at once, the same rule re-issues on dOEE >= delta at most once
+    per oee_alert_reissue_min."""
+    params = cfg.rules.engine
+    assert params.oee_alert_reissue_min == pytest.approx(5)
+    assert params.live_oee_min_elapsed_min == pytest.approx(120)
+    target = cfg.rules.thresholds.oee_target
+    near = target + cfg.rules.thresholds.oee_near_margin_pp / 200  # inside the AL-O2 band
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    core.drain()
+    scripted: dict[str, float | None] = {"oee": None}
+    real = core.evaluator.oee
+
+    def oee(*, line: str, period_date: object, shift: str | None, oee: float | None) -> object:
+        value = scripted["oee"] if line == "WELD-1" else None
+        return real(line=line, period_date=period_date, shift=shift, oee=value)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(core.evaluator, "oee", oee)
+
+    def tick(minute: float, value: float) -> list[tuple[str, str, object]]:
+        scripted["oee"] = value
+        core.live_kpi(at(minute))
+        return [
+            (a.rule_id, a.status, a.value)
+            for a in of_type(core.drain()[0], AlertUpsert)
+            if a.rule_id in ("AL-O1", "AL-O2") and a.entity == "WELD-1"
+        ]
+
+    low = round(target - 0.05, 4)
+    assert tick(121, low) == [("AL-O1", "open", low)]
+    # (2) dOEE >= delta but < 5 min after the upsert; then dOEE < delta after 5 min: no re-issue
+    assert tick(123, round(low - 0.02, 4)) == []
+    assert tick(124, round(low + 0.005, 4)) == []
+    assert tick(127, round(low - 0.005, 4)) == []
+    lower = round(low - 0.02, 4)
+    assert tick(128, lower) == [("AL-O1", "open", lower)]
+    # (1) O1 -> O2 inside the dwell (from the 128 upsert) is held, swaps after it
+    assert tick(130, near) == []
+    assert tick(132.9, near) == []
+    swap = tick(133.5, near)
+    assert sorted(swap, key=lambda r: r[0]) == [
+        ("AL-O1", "resolved", lower),
+        ("AL-O2", "open", near),
+    ]
+    # (3) O2 -> O1 is applied at once
+    worse = tick(134, low)
+    assert sorted(worse, key=lambda r: r[0]) == [
+        ("AL-O1", "open", low),
+        ("AL-O2", "resolved", near),
+    ]
+    # (4) O1 -> no alert resolves only after the dwell
+    good = round(target + 0.05, 4)
+    assert tick(136, good) == []
+    assert tick(138.9, good) == []
+    assert tick(139.5, good) == [("AL-O1", "resolved", low)]

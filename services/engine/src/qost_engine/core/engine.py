@@ -1320,10 +1320,27 @@ class EngineCore:
             period_key=alert.period_key,
             value=value,
             projection=projection,
+            raised_at=t,
         )
-        if prev is not None:
+        if prev is not None and prev.severity == alert.severity:
             new.escalation_level = prev.escalation_level
             new.escalation_due = prev.escalation_due
+        elif prev is not None:
+            # severity changed: fit the escalation state to the chain of the new severity
+            esc = self.cfg.rules.escalation.get(alert.severity)
+            if esc is None or not esc.chain:
+                new.escalation_level = prev.escalation_level
+                new.escalation_due = None
+            else:
+                level = min(prev.escalation_level, len(esc.chain) - 1)
+                new.escalation_level = level
+                if level + 1 >= len(esc.chain) or self.mode != "live":
+                    new.escalation_due = None
+                else:
+                    due = t + esc.timeout_min * 60.0
+                    if prev.escalation_due is not None:
+                        due = min(due, prev.escalation_due)
+                    new.escalation_due = due
         elif self.mode == "live":
             esc = self.cfg.rules.escalation.get(alert.severity)
             if esc is not None and len(esc.chain) > 1:
@@ -1520,6 +1537,7 @@ class EngineCore:
                     cond.active_key, cond.active_token = alert.dedup_key, token
                     cond.pending = None
                     cond.clear_since = None
+                    cond.down_token = cond.down_since = None
                     self._raise(alert, t)
             return
         if token is None or (
@@ -1532,13 +1550,24 @@ class EngineCore:
                 cond.active_key = cond.active_token = None
                 cond.clear_since = None
                 cond.pending, cond.since = None, None
+                cond.down_token = cond.down_since = None
             return
         cond.clear_since = None
-        if token != cond.active_token and cond.since is not None:
-            alert = make(cond.since)
-            if alert is not None and alert.dedup_key == cond.active_key:
-                cond.active_token = token
-                self._raise(alert, t)
+        if token == cond.active_token or cond.since is None:
+            cond.down_token = cond.down_since = None
+            return
+        if _severity_rank(token) < _severity_rank(cond.active_token):
+            # hysteresis (STAB-6): a lower severity replaces the active one only after holding
+            if cond.down_token != token:
+                cond.down_token, cond.down_since = token, t
+            assert cond.down_since is not None
+            if t - cond.down_since < debounce:
+                return
+        cond.down_token = cond.down_since = None
+        alert = make(cond.since)
+        if alert is not None and alert.dedup_key == cond.active_key:
+            cond.active_token = token
+            self._raise(alert, t)
 
     def _check_buffer(self, code: str, t: float) -> None:
         b = self.st.buffers[code]
@@ -1624,7 +1653,10 @@ class EngineCore:
             elif stop.alert is not None and stop.alert in self.st.alerts:
                 shown = self.st.alerts[stop.alert].value
                 elapsed = stop.duration(t) / 60.0
-                if isinstance(shown, dict) and elapsed - float(shown.get("elapsed_min", 0)) >= 5.0:
+                shown_min = float(shown.get("elapsed_min", 0)) if isinstance(shown, dict) else None
+                if shown_min is not None and (
+                    elapsed - shown_min >= self.params.alert_impact_refresh_min
+                ):
                     self._update_s1(stop, t)  # FR-ENG-06: the impact grows with the stop
             if (
                 not stop.flagged
@@ -1654,8 +1686,8 @@ class EngineCore:
         for key, a in list(self.st.alerts.items()):
             if a.escalation_due is not None and a.escalation_due <= t:
                 esc = self.cfg.rules.escalation.get(a.severity)  # type: ignore[call-overload]
-                if esc is None:
-                    a.escalation_due = None
+                if esc is None or a.escalation_level + 1 >= len(esc.chain):
+                    a.escalation_due = None  # end of the chain (e.g. restored from an old state)
                     continue
                 a.escalation_level += 1
                 level = a.escalation_level
@@ -1740,6 +1772,9 @@ class EngineCore:
             msgs.append(LiveMsg("kpi", now, data, ("lines", line, dict(view))))
             if not acc.partial and elapsed >= self.params.live_oee_min_elapsed_min:
                 alert = self.evaluator.oee(line=line, period_date=day, shift=acc.code, oee=kpi.oee)
+                new_rank = _OEE_RANK[alert.rule_id] if alert is not None else 0
+                dwell = self.params.oee_alert_reissue_min * 60.0
+                hold = False
                 for rule in (AL_OEE_BELOW, AL_OEE_NEAR):
                     key = f"{rule}|{line}|{acc.key}"
                     existing = self.st.alerts.get(key)
@@ -1748,13 +1783,24 @@ class EngineCore:
                         and existing.projection
                         and (alert is None or alert.dedup_key != key)
                     ):
+                        if (
+                            new_rank < _OEE_RANK[rule]
+                            and t - (existing.raised_at or existing.ts) < dwell
+                        ):
+                            hold = True  # STAB-6: an improvement replaces it after the dwell
+                            continue
                         self._resolve(key, t)
-                if alert is not None:
+                if alert is not None and not hold:
                     prev = self.st.alerts.get(alert.dedup_key)
                     if (
                         prev is None
                         or prev.severity != alert.severity
-                        or abs(_as_float(prev.value) - _as_float(alert.value)) >= 0.005
+                        or (
+                            abs(_as_float(prev.value) - _as_float(alert.value))
+                            >= self.params.oee_alert_reissue_delta
+                            and t - (prev.raised_at or prev.ts)
+                            >= self.params.oee_alert_reissue_min * 60.0
+                        )
                     ):
                         self._raise(alert, t, projection=True)
         for area, kpi in self._area_kpis(kpis).items():
@@ -1895,6 +1941,16 @@ def line_shift_kpi(
         failures=failures,
         repair_min=repair,
     )
+
+
+_SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
+_OEE_RANK = {AL_OEE_BELOW: 2, AL_OEE_NEAR: 1}
+"""AL-O1 (below target) is worse than AL-O2 (near it); no alert = 0."""
+
+
+def _severity_rank(token: str | None) -> int:
+    """Rank of the severity in a condition token ``severity:direction``."""
+    return _SEVERITY_RANK.get((token or "").split(":")[0], 0)
 
 
 def _as_float(value: object) -> float:

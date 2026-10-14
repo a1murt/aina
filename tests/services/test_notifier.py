@@ -276,6 +276,9 @@ def test_s1_message_has_the_spec_format(cfg: TwinConfig) -> None:
 
 def test_impact_wording() -> None:
     assert impact_short({"lost_units": 0}) == "влияние на выпуск: нет"
+    assert impact_short({"lost_units": 0}, per_min=60 / 233) == (
+        "оценка: ≈ 0,26 авто за каждую минуту простоя"
+    )
     assert impact_short({"lost_units": 3.0, "bottleneck": True}) == (
         "влияние: −3 авто, безвозвратно (узкое место)"
     )
@@ -285,6 +288,17 @@ def test_impact_wording() -> None:
     assert impact_short({"lost_units": 5.0, "recover_shifts": 1.5, "irrecoverable_units": 1.0}) == (
         "влияние: −5 авто, отыгрывается за ~1,5 смены (~1 безвозвратно)"
     )
+
+
+def test_open_stop_without_loss_shows_the_rate_per_minute(cfg: TwinConfig) -> None:
+    """VIS-1: the first message of a just-opened stop must not say "no impact"."""
+    value = {**S1_VALUE, "elapsed_min": 0.0, "impact": {"lost_units": 0.0, "recover_shifts": None}}
+    alert = row_of(upsert(value=value), 8)
+    assert headline(cfg, alert).endswith(
+        "· Сборка-1 · оценка: ≈ 0,26 авто за каждую минуту простоя"
+    )
+    closed = row_of(upsert(value={**value, "ended": "2026-10-15T04:32:00+00:00"}), 9)
+    assert headline(cfg, closed).endswith("· влияние на выпуск: нет")
 
 
 def test_other_rules_carry_their_message(cfg: TwinConfig) -> None:

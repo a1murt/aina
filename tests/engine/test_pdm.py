@@ -70,20 +70,21 @@ def alerts(effects: list[Any], rule: str) -> list[AlertUpsert]:
 # --------------------------------------------------------------------------- cadence
 
 
-def test_ticks_every_15_plant_minutes_after_the_settle_time(cfg: TwinConfig) -> None:
+def test_ticks_every_pdm_tick_min_after_the_settle_time(cfg: TwinConfig) -> None:
     core = started(cfg)
-    assert core.params.pdm_tick_min == 15
+    step = core.params.pdm_tick_min
+    assert step == 5  # DEMO-5: the demo needs a tick every 5 plant minutes (rules.yaml)
     # a fresh start serves the current slot only (not the one before demo_start)
     assert core.pdm_slot(at(1), 120) is None  # 02:01: the 02:00 slot has not settled yet
     first = core.pdm_slot(at(3), 120)  # the 02:00 slot is served from 02:02
     assert first == at(0)
     core.apply_pdm(PdmTick(first, ()))
-    assert core.pdm_slot(at(16), 120) is None  # the same slot is not served twice
-    assert core.pdm_slot(at(31), 120) == at(15)  # served late: every slot has its own tick
-    core.apply_pdm(PdmTick(at(15), ()))
-    assert core.pdm_slot(at(31), 120) is None  # 02:30 settles at 02:32
-    assert core.pdm_slot(at(32), 120) == at(30)
-    core.apply_pdm(PdmTick(at(30), ()))
+    assert core.pdm_slot(at(step + 1), 120) is None  # the same slot is not served twice
+    assert core.pdm_slot(at(2 * step + 1), 120) == at(step)  # served late: one tick per slot
+    core.apply_pdm(PdmTick(at(step), ()))
+    assert core.pdm_slot(at(2 * step + 1), 120) is None  # 2*step settles 2 min after it
+    assert core.pdm_slot(at(2 * step + 2), 120) == at(2 * step)
+    core.apply_pdm(PdmTick(at(2 * step), ()))
     # a long pause serves only the newest slot, not every missed one
     assert core.pdm_slot(at(200), 120) == at(195)
     # slots are aligned to the clock, not to the engine start

@@ -144,7 +144,9 @@ async def test_sim_clock_reads_redis_state() -> None:
     assert not bool(clock.is_stale)  # bool(): keep mypy from narrowing the property
     wall.now = WALL0 + timedelta(seconds=30)  # sim stopped writing for > stale_after (10 s)
     assert clock.is_stale
-    assert clock.now() == T0 + timedelta(minutes=30)
+    assert clock.now() == T0 + timedelta(minutes=10)  # STAB-4: extrapolation stops at 10 s
+    wall.now = WALL0 + timedelta(hours=1)  # the host slept for an hour
+    assert clock.now() == T0 + timedelta(minutes=10)
 
     await publish_clock_state(kv, ClockState(plant_time=T0, wall_ts=WALL0, speed=60.0, paused=True))
     await clock.refresh()
@@ -178,3 +180,57 @@ def test_create_clock_by_mode() -> None:
     sim = create_clock(TwinSettings(clock_mode="sim"), store=FakeKV())
     assert isinstance(sim, SimClock)
     assert sim.mode == "sim"
+
+
+class FlakyKV(FakeKV):
+    """Raises redis-py errors (not builtins.ConnectionError / OSError) while ``down``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+        self.errors = 0
+
+    async def get(self, key: str) -> str | None:
+        if self.down:
+            from redis.exceptions import ConnectionError as RedisConnectionError
+
+            self.errors += 1
+            raise RedisConnectionError("Error 111 connecting to redis:6379")
+        return await super().get(key)
+
+
+async def test_sim_clock_poll_survives_redis_errors() -> None:
+    """STAB-3: a redis-py error must not end the poll (the clock would extrapolate forever)."""
+    kv, wall = FlakyKV(), FakeWall(WALL0)
+    await publish_clock_state(kv, ClockState(plant_time=T0, wall_ts=WALL0, speed=1.0))
+    async with SimClock(kv, wall=wall, poll_interval_s=0.01) as clock:
+        assert clock.now() == T0
+        kv.down = True
+        for _ in range(100):
+            if kv.errors >= 3:
+                break
+            await asyncio.sleep(0.01)
+        assert kv.errors >= 3
+        assert clock._task is not None
+        assert not clock._task.done()
+        kv.down = False
+        later = T0 + timedelta(hours=1)
+        await publish_clock_state(kv, ClockState(plant_time=later, wall_ts=WALL0, speed=1.0))
+        for _ in range(100):
+            if clock.now() == later:
+                break
+            await asyncio.sleep(0.01)
+        assert clock.now() == later
+
+
+def test_extrapolation_cap() -> None:
+    """STAB-4: plant time moves at most ``max_elapsed`` x speed past the last write."""
+    state = ClockState(plant_time=T0, wall_ts=WALL0, speed=60.0)
+    cap = timedelta(seconds=10)
+    assert state.plant_time_at(WALL0 + timedelta(seconds=5), max_elapsed=cap) == T0 + timedelta(
+        minutes=5
+    )
+    assert state.plant_time_at(WALL0 + timedelta(hours=8), max_elapsed=cap) == T0 + timedelta(
+        minutes=10
+    )
+    assert state.plant_time_at(WALL0 + timedelta(hours=8)) == T0 + timedelta(hours=480)

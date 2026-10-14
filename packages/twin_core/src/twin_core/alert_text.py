@@ -5,11 +5,13 @@ Kazakh texts arrive with M8. Numbers use a decimal comma; times are shown in the
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from typing import Any
 
 from twin_core.clock import to_plant_tz
 from twin_core.config import TwinConfig
+from twin_core.kpi import minutes_to_units
 from twin_core.rules import (
     AL_ANDON,
     AL_BUFFER,
@@ -42,6 +44,25 @@ def pct(value: float) -> str:
     return f"{value * 100:.2f}".rstrip("0").rstrip(".").replace(".", ",")
 
 
+NBSP = "\u00a0"
+
+
+def pct_text(value: float) -> str:
+    """Percent for alert texts: ``5,17 %`` (no-break space before the sign, as on the tiles)."""
+    return f"{pct(value)}{NBSP}%"
+
+
+def round_half_up(value: float) -> int:
+    """Nearest whole number, halves away from zero as ``Intl.NumberFormat`` on the web tiles
+    (Python ``round`` is banker's: 12.5 -> 12)."""
+    return int(math.copysign(math.floor(abs(value) + 0.5), value))
+
+
+def qty(value: float) -> str:
+    """Whole number with no-break-space thousands: ``4 800``."""
+    return f"{round_half_up(value):,d}".replace(",", NBSP)
+
+
 def num(value: float, digits: int | None = None) -> str:
     """Number with a decimal comma (``g`` format, or ``digits`` decimals)."""
     text = f"{value:g}" if digits is None else f"{value:.{digits}f}"
@@ -64,11 +85,34 @@ def alert_title_ru(alert: Alert, cfg: TwinConfig) -> str:
     return rule.name_ru if rule is not None else alert.rule_id
 
 
-def impact_text(impact: dict[str, Any]) -> str:
-    """FR-ENG-06 wording of :func:`twin_core.kpi.stop_impact` (as stored in the alert value)."""
+def open_stop_rate(cfg: TwinConfig, value: dict[str, Any]) -> float | None:
+    """Cars per minute of an AL-S1 stop that is still open (``ended`` is None), else ``None``.
+
+    Uses :func:`twin_core.kpi.minutes_to_units` for one minute on the stop's line (no new
+    formula): the impact of a just-opened stop is 0 and grows with the stop (VIS-1).
+    """
+    if value.get("ended") is not None or value.get("microstop"):
+        return None
+    line = cfg.lines.get(str(value.get("line")))
+    if line is None:
+        return None
+    return minutes_to_units(1.0, float(line.ict_seconds))
+
+
+def rate_text(per_min: float) -> str:
+    """``оценка: ≈ 0,26 авто за каждую минуту простоя``."""
+    return f"оценка: ≈ {num(per_min, 2)} авто за каждую минуту простоя"
+
+
+def impact_text(impact: dict[str, Any], *, per_min: float | None = None) -> str:
+    """FR-ENG-06 wording of :func:`twin_core.kpi.stop_impact` (as stored in the alert value).
+
+    ``per_min``: cars per minute of an open stop (:func:`open_stop_rate`); shown instead of
+    "no impact" while the loss is still 0.
+    """
     lost = float(impact.get("lost_units") or 0.0)
     if lost <= 0:
-        return "влияния на выпуск нет"
+        return rate_text(per_min) if per_min else "влияния на выпуск нет"
     head = f"потеря ≈ {num(lost, 1)} авто"
     if impact.get("bottleneck"):
         return f"{head}, безвозвратно (узкое место)"
@@ -89,10 +133,10 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
     value = alert.value
     if alert.rule_id == AL_DEFECT_RATE and isinstance(value, float):
         name = cfg.areas[alert.entity].name_ru
-        return f"{name}: брак {pct(value)}% ({when}), норма {pct(t.defect_rate_limit)}%"
+        return f"{name}: брак {pct_text(value)} ({when}), норма {pct_text(t.defect_rate_limit)}"
     if alert.rule_id in (AL_OEE_BELOW, AL_OEE_NEAR) and isinstance(value, float):
         name = cfg.lines[alert.entity].name_ru
-        return f"{name}: OEE {pct(value)}% ({when}), цель {pct(t.oee_target)}%"
+        return f"{name}: OEE {pct_text(value)} ({when}), цель {pct_text(t.oee_target)}"
     if alert.rule_id == AL_DOWNTIME_LIMIT and isinstance(value, float):
         name = cfg.equipment[alert.entity].name_ru
         return (
@@ -100,7 +144,9 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
             f"лимит {num(t.critical_downtime_limit_min_per_day)} мин в сутки"
         )
     if alert.rule_id == AL_SYSTEMIC_DEFECTS and isinstance(value, dict):
-        parts = ", ".join(f"{cfg.areas[area].name_ru} {pct(rate)}%" for area, rate in value.items())
+        parts = ", ".join(
+            f"{cfg.areas[area].name_ru} {pct_text(rate)}" for area, rate in value.items()
+        )
         return f"Брак вырос на всех участках ({when}): {parts}"
     if alert.rule_id == AL_EQUIPMENT_STOP and isinstance(value, dict):
         name = cfg.equipment[alert.entity].name_ru
@@ -112,7 +158,9 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
         if value.get("microstop"):
             return text + " — микроостановка, закрыто автоматически"
         impact = value.get("impact")
-        return text + (f"; {impact_text(impact)}" if isinstance(impact, dict) else "")
+        if not isinstance(impact, dict):
+            return text
+        return f"{text}; {impact_text(impact, per_min=open_stop_rate(cfg, value))}"
     if alert.rule_id == AL_BUFFER and isinstance(value, dict):
         buffer = cfg.buffers[alert.entity]
         level, capacity = value.get("level"), value.get("capacity")
@@ -131,11 +179,11 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
     if alert.rule_id == AL_PLAN_RISK and isinstance(value, dict):
         p = float(value.get("p", 0.0))
         text = (
-            f"Вероятность выполнить план месяца {pct(p)}% "
-            f"(цель {num(float(value.get('target_qty', 0)), 0)} авто, {when})"
+            f"Вероятность выполнить план месяца {round_half_up(p * 100)}{NBSP}% "
+            f"(цель {qty(float(value.get('target_qty', 0)))} авто, {when})"
         )
         if "p50" in value:
-            text += f", медианный прогноз {num(float(value['p50']), 0)} авто"
+            text += f", медианный прогноз {qty(float(value['p50']))} авто"
         return text
     if alert.rule_id in (AL_ANDON, AL_MATERIAL_CALL) and isinstance(value, dict):
         line = cfg.lines.get(alert.entity)
@@ -172,7 +220,7 @@ def pdm_text_ru(cfg: TwinConfig, equipment: str, value: dict[str, Any]) -> str:
     p = float(value.get("p_failure", 0.0))
     text = (
         f"{name}: вероятность отказа в ближайшие {num(float(value.get('horizon_h', 0)), 0)} ч — "
-        f"{pct(p)}% (индекс здоровья {num(float(value.get('health_index', 0)), 0)})"
+        f"{pct_text(p)} (индекс здоровья {num(float(value.get('health_index', 0)), 0)})"
     )
     factors = [str(f) for f in value.get("factors_ru") or []]
     if factors:
@@ -220,13 +268,14 @@ def _spc_text(alert: Alert, value: dict[str, Any], cfg: TwinConfig, when: str) -
     words = "; ".join(f"правило {r} — {SPC_RULES_RU.get(r, '')}" for r in rules)
     side = "выше" if int(value.get("side", 1)) > 0 else "ниже"
     return (
-        f"{area}: процесс вне статистического контроля ({when}): брак {pct(float(value['p']))}% "
-        f"при среднем {pct(float(value['p_bar']))}% ({side} центральной линии; "
-        f"верхняя граница {pct(float(value['ucl']))}%); {words}"
+        f"{area}: процесс вне статистического контроля ({when}): "
+        f"брак {pct_text(float(value['p']))} при среднем {pct_text(float(value['p_bar']))} "
+        f"({side} центральной линии; верхняя граница {pct_text(float(value['ucl']))}); {words}"
     )
 
 
 __all__ = [
+    "NBSP",
     "SPC_RULES_RU",
     "alert_message_ru",
     "alert_title_ru",
@@ -235,6 +284,10 @@ __all__ = [
     "limit_text_ru",
     "local_time",
     "num",
+    "open_stop_rate",
     "pct",
+    "pct_text",
     "pdm_text_ru",
+    "qty",
+    "rate_text",
 ]

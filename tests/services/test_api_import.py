@@ -107,11 +107,15 @@ def test_alert_messages(cfg: TwinConfig) -> None:
     o2 = Alert("AL-O2", "info", "line", "WELD-1", day, 0.8738, "A")
     d1 = Alert("AL-D1", "warning", "equipment", "CONV-03", day, 55.0)
     q3 = Alert("AL-Q3", "warning", "site", "PLANT", day, {"WELD": 0.027, "PAINT": 0.0517}, "A")
-    assert alert_message_ru(q1, cfg) == "Окраска: брак 5,17% (02.10.2026, смена A), норма 2%"
-    assert alert_message_ru(o2, cfg) == "Сварка-1: OEE 87,38% (02.10.2026, смена A), цель 85%"
+    assert alert_message_ru(q1, cfg) == (
+        "Окраска: брак 5,17\u00a0% (02.10.2026, смена A), норма 2\u00a0%"
+    )
+    assert alert_message_ru(o2, cfg) == (
+        "Сварка-1: OEE 87,38\u00a0% (02.10.2026, смена A), цель 85\u00a0%"
+    )
     assert alert_message_ru(d1, cfg) == (
         "Конвейер-03 (финальная): внеплановый простой 55 мин (02.10.2026), лимит 60 мин в сутки"
     )
     assert alert_message_ru(q3, cfg) == (
-        "Брак вырос на всех участках (02.10.2026, смена A): Сварка 2,7%, Окраска 5,17%"
+        "Брак вырос на всех участках (02.10.2026, смена A): Сварка 2,7\u00a0%, Окраска 5,17\u00a0%"
     )

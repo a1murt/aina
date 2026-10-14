@@ -26,7 +26,7 @@ from pydantic import TypeAdapter
 
 from qost_sim.bus import ResetOutcome, SimBus
 from qost_sim.model import EventFactory, Inject, PlantModel, Rec
-from qost_sim.model.scenarios import check_inject
+from qost_sim.model.scenarios import check_inject, schedule_history_scenarios
 from qost_sim.mqtt_pub import MqttPublisher
 from qost_sim.opcua_server import OpcUaServer
 from qost_sim.settings import SimSettings
@@ -34,6 +34,7 @@ from twin_core.clock import ClockState, ClockStateError, format_utc, read_clock_
 from twin_core.config import TwinConfig
 from twin_core.config.simulation import DefectMultiplierInject, FailureInject
 from twin_core.config.simulation import Inject as InjectUnion
+from twin_core.redis_errors import REDIS_ERRORS
 
 log = structlog.get_logger("qost_sim.live")
 
@@ -64,13 +65,14 @@ def warm_model(
     clock = cfg.simulation.clock
     demo = demo_start or clock.demo_start
     model = PlantModel(cfg, start=start or clock.backfill_from, seed=seed)
+    schedule_history_scenarios(cfg, model, demo)
     model.run_until_time(demo)
     model.drain()
     if telemetry_period_s is not None:
         model.start_telemetry(telemetry_period_s)
     demo_s = model.sec(demo)
     for scenario in cfg.simulation.scenarios:
-        if scenario.at_min is not None:
+        if scenario.at_min is not None and scenario.at_min >= 0:
             model.schedule(
                 demo_s + scenario.at_min * 60.0, scenario.inject, scenario_id=scenario.id
             )
@@ -202,8 +204,23 @@ class LiveRunner:
             log.warning("live_lagging", behind_s=target - limit)
             target = limit
             self.anchor_plant, self.anchor_wall = target, wall
+        stop_at = self._auto_pause_at(model)
+        if stop_at is not None and model.env.now < stop_at <= target:
+            model.run_until(stop_at)
+            await self._publish(model.drain())
+            self.state = "paused"
+            log.info("demo_auto_paused", plant_time=format_utc(model.now))
+            await self._publish_clock(force=True)
+            return
         model.run_until(target)
         await self._publish(model.drain())
+
+    def _auto_pause_at(self, model: PlantModel) -> float | None:
+        """Model seconds of the automatic pause (``clock.demo_auto_pause_after_min``)."""
+        after = self.cfg.simulation.clock.demo_auto_pause_after_min
+        if after is None:
+            return None
+        return model.sec(self.demo_start) + after * 60.0
 
     # ================================================================== publishing
 
@@ -256,7 +273,7 @@ class LiveRunner:
             state = ClockState(plant, self._wall(), self.speed, paused=paused, sim_mode="live")
             try:
                 await self.bus.set(self.settings.sim_clock_key, state.to_json())
-            except (OSError, ConnectionError) as exc:  # Redis down: keep simulating
+            except REDIS_ERRORS as exc:  # Redis down: keep simulating
                 log.warning("clock_publish_failed", error=str(exc))
 
     # ================================================================== commands
@@ -333,7 +350,7 @@ class LiveRunner:
                         },
                         timeout_s=self.settings.sim_reset_ack_timeout_s,
                     )
-                except (OSError, ConnectionError) as exc:
+                except REDIS_ERRORS as exc:
                     log.warning("reset_broadcast_failed", error=str(exc))
                     outcome = "error"
             self.last_reset = outcome
@@ -432,7 +449,7 @@ class LiveRunner:
             return None
         try:
             raw = await self.bus.get(self.settings.sim_state_key)
-        except (OSError, ConnectionError) as exc:
+        except REDIS_ERRORS as exc:
             log.warning("state_load_failed", error=str(exc))
             return None
         if raw is None:
@@ -448,7 +465,9 @@ class LiveRunner:
             return None
         try:
             return await read_clock_state(self.bus, key=self.settings.sim_clock_key)
-        except (ClockStateError, OSError, ConnectionError):
+        except ClockStateError:
+            return None
+        except REDIS_ERRORS:
             return None
 
     async def _save_state(self) -> None:
@@ -464,7 +483,7 @@ class LiveRunner:
         }
         try:
             await self.bus.set(self.settings.sim_state_key, json.dumps(doc, ensure_ascii=False))
-        except (OSError, ConnectionError) as exc:
+        except REDIS_ERRORS as exc:
             log.warning("state_save_failed", error=str(exc))
 
     def _parse_interventions(

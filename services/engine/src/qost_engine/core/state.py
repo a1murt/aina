@@ -121,6 +121,10 @@ class Cond:
     active_key: str | None = None
     active_token: str | None = None
     clear_since: float | None = None
+    down_token: str | None = None
+    """A lower severity seen while active; it replaces the active one only after holding for
+    ``alert_debounce_s`` (STAB-6 hysteresis: up at once, down after the debounce)."""
+    down_since: float | None = None
 
 
 @dataclass
@@ -140,6 +144,8 @@ class OpenAlert:
     escalation_level: int = 0
     escalation_due: float | None = None
     projection: bool = False
+    raised_at: float | None = None
+    """Plant time of the last upsert (rate limit of the AL-O1/O2 projections, STAB-6)."""
 
 
 @dataclass

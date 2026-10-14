@@ -523,7 +523,7 @@ def test_plan_risk_alert(client: TestClient, db: URL, cfg: TwinConfig) -> None:
     )
     assert rows, "AL-P1 opened for a low P(plan)"
     assert rows[0]["severity"] == "critical"
-    assert "4 800" in rows[0]["message_ru"] or "4800" in rows[0]["message_ru"]
+    assert "4\u00a0800" in rows[0]["message_ru"]  # thousands with a no-break space
     high = {"p_reach": {"line_plan": 0.9}, "targets": {"line_plan": 4800}}
     assert risk({}, high) == "resolved"
     assert risk({"defect_rate": {"PAINT": 0.1}}, low) is None  # what-if scenarios never raise it

@@ -4,6 +4,7 @@ DB sink row building, engine parameters in rules.yaml."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -23,7 +24,13 @@ from twin_core.events import (
     ulid_timestamp,
 )
 from twin_core.live import LiveKeys, build_snapshot, envelope, read_snapshot
-from twin_core.rules import AL_BUFFER, AL_CKD_COVERAGE, AL_EQUIPMENT_STOP, AlertEvaluator
+from twin_core.rules import (
+    AL_BUFFER,
+    AL_CKD_COVERAGE,
+    AL_EQUIPMENT_STOP,
+    Alert,
+    AlertEvaluator,
+)
 
 TS = datetime(2026, 10, 16, 2, 31, 12, 123000, tzinfo=UTC)
 DAY = date(2026, 10, 16)
@@ -127,6 +134,31 @@ def test_alert_texts(cfg: TwinConfig) -> None:
     assert "безвозвратно" in impact_text({**impact, "bottleneck": True})
     assert "не отыгрывается" in impact_text({**impact, "recover_shifts": None})
     assert "влияния на выпуск нет" in impact_text({"lost_units": 0})
+    assert impact_text({"lost_units": 0}, per_min=60 / 233) == (
+        "оценка: ≈ 0,26 авто за каждую минуту простоя"
+    )
+    # VIS-1: a just-opened stop (0 min, loss 0) shows the per-minute estimate, not "no impact"
+    opened = ev.equipment_stop(
+        equipment="CONV-03",
+        criticality="A",
+        period_date=DAY,
+        started_key="2026-10-16T02:46:00Z",
+        elapsed_s=0,
+        value={
+            "elapsed_min": 0,
+            "ended": None,
+            "line": "ASSY-1",
+            "reason_code": "ME-CHAIN",
+            "impact": {"lost_units": 0.0, "recover_shifts": None},
+        },
+    )
+    assert opened is not None
+    text = alert_message_ru(opened, cfg)
+    assert "влияния" not in text
+    assert text.endswith("0 мин; оценка: ≈ 0,26 авто за каждую минуту простоя")
+    assert isinstance(opened.value, dict)
+    closed = replace(opened, value={**opened.value, "ended": "2026-10-16T02:47:00Z"})
+    assert alert_message_ru(closed, cfg).endswith("влияния на выпуск нет")
     micro = ev.equipment_stop(
         equipment="CONV-01",
         criticality="A",
@@ -316,3 +348,23 @@ async def test_live_snapshot_contract(cfg: TwinConfig) -> None:
     keys = LiveKeys("t:live:", "t:live")
     assert keys.key("lines") == "t:live:lines"
     assert len(keys.all) == 9
+
+
+def test_alert_numbers_follow_the_ru_format(cfg: TwinConfig) -> None:
+    """VIS-8: no-break space before % and as the thousands separator; P as a whole percent."""
+    nb = " "
+    p1 = Alert(
+        "AL-P1", "warning", "site", "PLANT", DAY, {"p": 0.1874, "target_qty": 4800, "p50": 4512}
+    )
+    assert alert_message_ru(p1, cfg) == (
+        f"Вероятность выполнить план месяца 19{nb}% (цель 4{nb}800 авто, 16.10.2026), "
+        f"медианный прогноз 4{nb}512 авто"
+    )
+    half = Alert("AL-P1", "warning", "site", "PLANT", DAY, {"p": 0.125, "target_qty": 4800.5})
+    assert alert_message_ru(half, cfg).startswith(  # halves up, as Intl on the tiles
+        f"Вероятность выполнить план месяца 13{nb}% (цель 4{nb}801 авто"
+    )
+    q1 = Alert("AL-Q1", "critical", "area", "PAINT", DAY, 0.0517, "A")
+    assert alert_message_ru(q1, cfg) == (
+        f"Окраска: брак 5,17{nb}% (16.10.2026, смена A), норма 2{nb}%"
+    )

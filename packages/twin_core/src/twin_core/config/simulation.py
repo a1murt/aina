@@ -49,6 +49,10 @@ class SimClock(StrictModel):
     speed_presets: Annotated[list[PositiveFloat], Field(min_length=1)]
     backfill_from: AwareDatetime
     random_seed: int
+    demo_auto_pause_after_min: PositiveFloat | None = None
+    """Live mode pauses itself when plant time crosses ``demo_start`` + this many minutes (a stand
+    left running must not drift into a month without a plan, DEMO-11); null = never. Pressing
+    «Пуск» afterwards continues; a demo reset arms it again."""
 
     @model_validator(mode="after")
     def _order(self) -> SimClock:
@@ -320,8 +324,10 @@ Inject = Annotated[
 class Scenario(Named):
     id: Code
     inject: Inject
-    at_min: NonNegativeFloat | None
-    """Offset from ``clock.demo_start`` in plant minutes; null = manual trigger only."""
+    at_min: float | None
+    """Offset from ``clock.demo_start`` in plant minutes; null = manual trigger only. A negative
+    offset applies the scenario inside the history (backfill and the live warm-up alike), e.g. a
+    wear that already shows in the telemetry when the demo starts (DEMO-5)."""
 
 
 class SimulationConfig(StrictModel):
@@ -342,3 +348,14 @@ class SimulationConfig(StrictModel):
     ml_dataset: MlDataset
     scenarios: list[Scenario] = []
     forecast: ForecastConfig = ForecastConfig()
+
+    @model_validator(mode="after")
+    def _scenarios_in_history(self) -> SimulationConfig:
+        history_min = (self.clock.demo_start - self.clock.backfill_from).total_seconds() / 60.0
+        for scenario in self.scenarios:
+            if scenario.at_min is not None and scenario.at_min < -history_min:
+                raise ValueError(
+                    f"scenario {scenario.id}: at_min {scenario.at_min:g} is before "
+                    f"clock.backfill_from ({-history_min:g} min)"
+                )
+        return self

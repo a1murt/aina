@@ -20,7 +20,9 @@ import contextlib
 import json
 import signal
 import time
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 import structlog
@@ -45,12 +47,16 @@ from twin_core.events import parse_event
 from twin_core.health import load_config_or_exit, start_health_server
 from twin_core.live import HASHES, STRINGS, LiveKeys, envelope
 from twin_core.log import configure_logging
+from twin_core.redis_errors import REDIS_ERRORS
 from twin_core.settings import TwinSettings
 
 log = structlog.get_logger("qost_engine.service")
 
 REWIND_TOLERANCE = timedelta(minutes=5)
 """After a reset the plant clock must come back to demo_start (+ this) before timers resume."""
+
+TASKS = ("consume", "timers", "commit", "control", "pdm", "watch")
+"""Supervised loops of the live service: any of them ending stops the process (exit code 1)."""
 
 
 def _stream_id_le(a: str, b: str) -> bool:
@@ -110,7 +116,7 @@ async def reset_stream_and_live(settings: EngineSettings) -> None:
         await redis.delete(settings.events_stream)
         keys = LiveKeys(settings.live_prefix, settings.live_channel)
         await redis.delete(*[keys.key(n) for n in (*HASHES, *STRINGS)])
-    except (OSError, ConnectionError) as exc:
+    except REDIS_ERRORS as exc:
         log.warning("stream_reset_skipped", error=str(exc))
     finally:
         await redis.aclose()
@@ -146,9 +152,23 @@ class EngineService:
         self.commits = 0
         self.commit_errors = 0
         self.db_ok = True
-        self.lag_ms = 0.0
+        self.lag_ms: float | None = None
         self.processed = 0
         self.skipped = 0
+        self.poisoned = 0
+        self.exit_code = 0
+        self.tasks: dict[str, asyncio.Task[None]] = {}
+        self.backpressure = False
+        self.last_consume_wall: float | None = None
+        """``time.monotonic()`` of the last XREADGROUP that returned (with or without entries)."""
+        self.consume_loop_wall: float | None = None
+        """``time.monotonic()`` of the last consume iteration that finished an XREADGROUP call,
+        a handled Redis error included: the watchdog exits only on a hung await, not on a
+        Redis outage (``/readyz`` still answers 503 from :attr:`last_consume_wall`)."""
+        self.group_lag: int | None = None
+        self.group_pending: int | None = None
+        self.loop_errors: dict[str, int] = dict.fromkeys(TASKS, 0)
+        self._failures: dict[str, int] = dict.fromkeys(TASKS, 0)
         self.last_commit_wall = 0.0
         self._live_buffer: list[LiveMsg] = []
         self.serving: PdmServing | None = serving
@@ -198,7 +218,7 @@ class EngineService:
         while True:
             try:
                 return await fn()
-            except (OSError, ConnectionError) as exc:
+            except REDIS_ERRORS as exc:
                 log.warning("db_unavailable", error=str(exc), retry_s=delay)
                 await self.writer.reset_pool()
                 await asyncio.sleep(delay)
@@ -277,12 +297,29 @@ class EngineService:
 
     # ------------------------------------------------------------------ loops
 
+    async def _guard(self, name: str, body: Callable[[], Awaitable[None]]) -> None:
+        """Run one loop iteration; log and count a failure, re-raise after too many in a row
+        (the task then ends and :meth:`_task_done` stops the process)."""
+        try:
+            await body()
+        except Exception:
+            self.loop_errors[name] += 1
+            self._failures[name] += 1
+            failures = self._failures[name]
+            log.exception(f"{name}_failed", failures=failures)
+            if failures >= self.settings.engine_loop_max_failures:
+                raise
+            await asyncio.sleep(min(0.1 * failures, 2.0))
+        else:
+            self._failures[name] = 0
+
     async def consume(self) -> None:
         stream = self.settings.events_stream
         group, consumer = self.settings.engine_group, self.settings.engine_consumer
         pending_phase = True
         while not self.stopping.is_set():
-            if self.paused or len(self.pending) > self.settings.engine_max_pending_ops:
+            self.backpressure = len(self.pending) > self.settings.engine_max_pending_ops
+            if self.paused or self.backpressure:
                 await asyncio.sleep(0.05)
                 continue
             try:
@@ -295,19 +332,31 @@ class EngineService:
                 )
             except Exception as exc:
                 if "NOGROUP" in str(exc):
-                    await self._ensure_group()
+                    with contextlib.suppress(*REDIS_ERRORS):
+                        await self._ensure_group()
+                    self.consume_loop_wall = time.monotonic()
                     continue
                 log.warning("redis_unavailable", error=str(exc))
+                self.consume_loop_wall = time.monotonic()
                 await asyncio.sleep(0.5)
                 continue
+            self.last_consume_wall = self.consume_loop_wall = time.monotonic()
             entries = resp[0][1] if resp else []
             if pending_phase and not entries:
                 pending_phase = False
                 continue
             if not entries:
                 continue
-            self._process(entries)
-            await self._flush_live()
+            try:
+                self._process(entries)
+                await self._flush_live()
+            except Exception:
+                # the batch ids are already in pending_ids: they are acked with the next commit
+                self.loop_errors["consume"] += 1
+                log.exception(
+                    "consume_failed",
+                    stream_id=f"{entries[0][0].decode()}..{entries[-1][0].decode()}",
+                )
 
     def _process(self, entries: list[tuple[bytes, dict[bytes, bytes]]]) -> None:
         for raw_id, fields in entries:
@@ -327,16 +376,25 @@ class EngineService:
             except ValueError as exc:
                 log.warning("bad_event", stream_id=sid, error=str(exc)[:200])
                 continue
-            self.core.apply(event)
+            try:
+                self.core.apply(event)
+            except Exception:
+                # a poisoned event is logged and skipped (acked with the batch), never retried
+                self.poisoned += 1
+                log.exception(
+                    "consume_failed",
+                    stream_id=sid,
+                    kind=event.kind,
+                    entity=event.entity,
+                    ts=event.ts.isoformat(),
+                )
+                continue
             self.processed += 1
             self.last_event_ts = event.ts
             now = self._now()
-            if now is not None:
-                self.lag_ms = (
-                    max(0.0, (now - event.ts).total_seconds())
-                    * 1000.0
-                    / max(self.clock.speed, 1e-9)
-                )
+            speed = self.clock.speed
+            if now is not None and speed > 0:
+                self.lag_ms = max(0.0, (now - event.ts).total_seconds()) * 1000.0 / speed
         effects, live = self.core.drain()
         self.pending.extend(effects)
         self._live_buffer.extend(live)
@@ -359,25 +417,33 @@ class EngineService:
                 msgs.extend(live)
         try:
             await self.publisher.publish(msgs)
-        except (OSError, ConnectionError) as exc:
+        except REDIS_ERRORS as exc:
             log.warning("publish_failed", error=str(exc))
+
+    def _clock_stale(self) -> bool:
+        """The simulator stopped writing the clock (or the host slept): plant time is frozen at
+        the cap, so timers and PdM wait instead of acting on it (STAB-4)."""
+        return bool(getattr(self.clock, "is_stale", False))
 
     async def timers(self) -> None:
         while not self.stopping.is_set():
             await asyncio.sleep(0.1)
-            if self.paused or not self.ready:
+            if self.paused or not self.ready or self._clock_stale():
                 continue
-            now = self._now()
-            if now is None:
-                continue
-            self.core.close_grace_s = self.settings.engine_close_grace_wall_s * max(
-                self.clock.speed, 1.0
-            )
-            self.core.advance_to(now)
-            effects, live = self.core.drain()
-            self.pending.extend(effects)
-            self._live_buffer.extend(live)
-            await self._flush_live()
+            await self._guard("timers", self._timers_tick)
+
+    async def _timers_tick(self) -> None:
+        now = self._now()
+        if now is None:
+            return
+        self.core.close_grace_s = self.settings.engine_close_grace_wall_s * max(
+            self.clock.speed, 1.0
+        )
+        self.core.advance_to(now)
+        effects, live = self.core.drain()
+        self.pending.extend(effects)
+        self._live_buffer.extend(live)
+        await self._flush_live()
 
     async def pdm(self) -> None:
         """PdM tick every ``pdm_tick_min`` plant minutes (SPEC §11.1): refresh the cache from
@@ -386,61 +452,67 @@ class EngineService:
             await asyncio.sleep(0.5)
             if self.paused or not self.ready or self.serving is None or self.pdm_feed is None:
                 continue
-            now = self._now()
-            if now is None or time.monotonic() < self._pdm_retry_wall:
+            if self._clock_stale():
                 continue
-            slot = self.core.pdm_slot(now, self.settings.engine_pdm_settle_s)
-            if slot is None:
-                continue
-            epoch, core = self.epoch, self.core
-            asof = slot + timedelta(seconds=self.settings.engine_pdm_settle_s)
-            try:
-                await self.pdm_feed.refresh(self.pdm_cache, asof)
-                tick = await asyncio.to_thread(
-                    self.serving.evaluate, self.pdm_cache, slot, None, asof
+            await self._guard("pdm", self._pdm_tick)
+
+    async def _pdm_tick(self) -> None:
+        if self.serving is None or self.pdm_feed is None:
+            return
+        now = self._now()
+        if now is None or time.monotonic() < self._pdm_retry_wall:
+            return
+        slot = self.core.pdm_slot(now, self.settings.engine_pdm_settle_s)
+        if slot is None:
+            return
+        epoch, core = self.epoch, self.core
+        asof = slot + timedelta(seconds=self.settings.engine_pdm_settle_s)
+        try:
+            await self.pdm_feed.refresh(self.pdm_cache, asof)
+            tick = await asyncio.to_thread(self.serving.evaluate, self.pdm_cache, slot, None, asof)
+        except Exception as exc:
+            self.pdm_errors += 1
+            self._pdm_retry_wall = time.monotonic() + self.settings.engine_pdm_retry_s
+            self.pdm_cache.clear()
+            log.warning("pdm_tick_failed", error=str(exc)[:300])
+            return
+        if self.paused or self.epoch != epoch or self.core is not core:
+            return  # a demo reset happened meanwhile
+        core.apply_pdm(tick)
+        log.info(
+            "pdm_tick",
+            slot=slot.isoformat(),
+            units=len(tick.units),
+            limits=[
+                (
+                    i.equipment,
+                    i.signal,
+                    i.hours_to_limit and round(i.hours_to_limit, 1),
+                    i.n_points,
                 )
-            except Exception as exc:
-                self.pdm_errors += 1
-                self._pdm_retry_wall = time.monotonic() + self.settings.engine_pdm_retry_s
-                self.pdm_cache.clear()
-                log.warning("pdm_tick_failed", error=str(exc)[:300])
-                continue
-            if self.paused or self.epoch != epoch or self.core is not core:
-                continue  # a demo reset happened meanwhile
-            core.apply_pdm(tick)
-            log.info(
-                "pdm_tick",
-                slot=slot.isoformat(),
-                units=len(tick.units),
-                limits=[
-                    (
-                        i.equipment,
-                        i.signal,
-                        i.hours_to_limit and round(i.hours_to_limit, 1),
-                        i.n_points,
-                    )
-                    for i in tick.limits
-                    if i.alert
-                ],
-            )
-            effects, live = core.drain()
-            self.pending.extend(effects)
-            self._live_buffer.extend(live)
-            self.pdm_ticks += 1
-            await self._flush_live()
+                for i in tick.limits
+                if i.alert
+            ],
+        )
+        effects, live = core.drain()
+        self.pending.extend(effects)
+        self._live_buffer.extend(live)
+        self.pdm_ticks += 1
+        await self._flush_live()
 
     async def committer(self) -> None:
         while not self.stopping.is_set():
             await asyncio.sleep(self.settings.engine_commit_ms / 1000.0)
             if self.paused:
                 continue
-            await self.commit()
+            await self._guard("commit", self._commit_tick)
+
+    async def _commit_tick(self) -> None:
+        await self.commit()
 
     async def commit(self) -> bool:
         if not self.pending and not self.pending_ids:
             return True
-        effects, self.pending = self.pending, []
-        ids, self.pending_ids = self.pending_ids, []
         last_id = self.last_id
         cp = Checkpoint(
             self.settings.engine_checkpoint,
@@ -449,6 +521,8 @@ class EngineService:
             self.core.snapshot(),
             self._now() or self.last_event_ts or system_now(),
         )
+        effects, self.pending = self.pending, []
+        ids, self.pending_ids = self.pending_ids, []
         try:
             escalated = await self.writer.commit(effects, [cp])
         except Exception as exc:
@@ -466,10 +540,13 @@ class EngineService:
         if ids:
             with contextlib.suppress(Exception):
                 await self.redis.xack(self.settings.events_stream, self.settings.engine_group, *ids)
-        if escalated:
-            await self._publish_escalations(escalated)
-        if any(isinstance(e, AlertUpsert) for e in effects) or escalated:
-            await self._refresh_counts()
+        try:
+            if escalated:
+                await self._publish_escalations(escalated)
+            if any(isinstance(e, AlertUpsert) for e in effects) or escalated:
+                await self._refresh_counts()
+        except REDIS_ERRORS as exc:
+            log.warning("publish_failed", error=str(exc))
         await self._meta()
         return True
 
@@ -514,28 +591,45 @@ class EngineService:
     # ------------------------------------------------------------------ demo reset
 
     async def control(self) -> None:
-        pubsub = self.redis.pubsub()
-        await pubsub.subscribe(self.settings.sim_control_channel)
+        """Listen for demo resets on ``sim:control``; resubscribe after a Redis outage. A failed
+        reset is logged and not acked (the simulator reports a timeout), the loop continues."""
+        while not self.stopping.is_set():
+            pubsub = self.redis.pubsub()
+            try:
+                await pubsub.subscribe(self.settings.sim_control_channel)
+                while not self.stopping.is_set():
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if msg is not None:
+                        await self._guard("control", partial(self._control_msg, msg))
+            except REDIS_ERRORS as exc:
+                log.warning("control_unavailable", error=str(exc))
+                await asyncio.sleep(1.0)
+            finally:
+                with contextlib.suppress(Exception):
+                    await pubsub.unsubscribe()
+                    await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+    async def _control_msg(self, msg: dict[str, Any]) -> None:
         try:
-            while not self.stopping.is_set():
-                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if msg is None:
-                    continue
-                try:
-                    body = json.loads(msg["data"])
-                except (ValueError, TypeError):
-                    continue
-                if body.get("action") == "reset":
-                    await self.reset(int(body["epoch"]), body["demo_start"])
-        finally:
-            with contextlib.suppress(Exception):
-                await pubsub.unsubscribe()
-                await pubsub.aclose()  # type: ignore[no-untyped-call]
+            body = json.loads(msg["data"])
+            action = body.get("action") if isinstance(body, dict) else None
+        except (ValueError, TypeError):
+            return
+        if action != "reset":
+            return
+        epoch = int(body["epoch"])
+        try:
+            await self.reset(epoch, body["demo_start"])
+        except Exception:
+            log.exception("reset_failed", epoch=epoch)
 
     async def _collector_idle(self) -> None:
         deadline = time.monotonic() + self.settings.engine_reset_wait_s
         while time.monotonic() < deadline:
-            raw: Any = await self.redis.hgetall(self.settings.collector_status_key)
+            try:
+                raw: Any = await self.redis.hgetall(self.settings.collector_status_key)
+            except REDIS_ERRORS:
+                return
             if raw:
                 status = {k.decode(): v.decode() for k, v in raw.items()}
                 if status.get("queued", "0") == "0" and status.get("spooled", "0") == "0":
@@ -600,36 +694,148 @@ class EngineService:
 
     # ------------------------------------------------------------------ health
 
+    def consume_age_s(self) -> float | None:
+        """Wall seconds since the last XREADGROUP returned (``None`` before the first one)."""
+        if self.last_consume_wall is None:
+            return None
+        return time.monotonic() - self.last_consume_wall
+
+    def _consume_stalled(self, limit_s: float, *, loop: bool = False) -> bool:
+        """The consumer has not read for ``limit_s`` (``loop``: the consume loop itself has not
+        come back from an XREADGROUP call, errors included, i.e. a hung await)."""
+        if self.paused or self.backpressure or limit_s <= 0:
+            return False
+        wall = self.consume_loop_wall if loop else self.last_consume_wall
+        age = None if wall is None else time.monotonic() - wall
+        return age is not None and age > limit_s
+
+    def health(self) -> tuple[bool, list[str]]:
+        """Readiness and the reasons it is false (``/readyz``, STAB-2)."""
+        reasons: list[str] = []
+        if not self.ready:
+            reasons.append("starting")
+        dead = [name for name, task in self.tasks.items() if task.done()]
+        if dead:
+            reasons.append("task_done:" + ",".join(dead))
+        if self.ready and self._consume_stalled(self.settings.engine_consume_stale_s):
+            reasons.append(f"consume_stale:{self.consume_age_s():.0f}s")
+        if self.ready and self.last_consume_wall is None and self.tasks:
+            reasons.append("consume_not_started")
+        return not reasons, reasons
+
+    def is_ready(self) -> bool:
+        return self.health()[0]
+
     def stats(self) -> dict[str, object]:
+        age = self.consume_age_s()
+        speed = self.clock.speed
+        ready, reasons = self.health()
         return {
-            "ready": self.ready,
+            "ready": ready,
+            "not_ready": reasons,
             "db_ok": self.db_ok,
             "processed": self.processed,
             "skipped": self.skipped,
+            "poisoned": self.poisoned,
             "pending_ops": len(self.pending),
             "pending_ids": len(self.pending_ids),
             "checkpoint_id": self.checkpoint_id,
             "last_id": self.last_id,
-            "lag_ms": round(self.lag_ms, 1),
+            "lag_ms": None if self.lag_ms is None or speed <= 0 else round(self.lag_ms, 1),
+            "clock_speed": speed,
             "commits": self.commits,
             "commit_errors": self.commit_errors,
             "published": self.publisher.published,
             "epoch": self.epoch,
+            "paused": self.paused,
+            "tasks_alive": {name: not task.done() for name, task in self.tasks.items()},
+            "loop_errors": dict(self.loop_errors),
+            "last_consume_age_s": None if age is None else round(age, 2),
+            "last_consume_wall": None
+            if age is None
+            else (system_now() - timedelta(seconds=age)).isoformat(),
+            "group_lag": self.group_lag,
+            "group_pending": self.group_pending,
             **self.core.stats,
         }
 
-    async def run(self) -> None:
+    async def watch(self) -> None:
+        """Watchdog: refresh the consumer-group lag (XINFO GROUPS) and stop the process when the
+        consumer has stalled (a hung await, STAB-2): the container restarts from the checkpoint."""
+        period = self.settings.engine_watch_s
+        last = time.monotonic()
+        strikes = 0
+        while not self.stopping.is_set():
+            await asyncio.sleep(period)
+            now = time.monotonic()
+            # a long synchronous step (the loop itself was blocked) is not a stalled consumer
+            blocked, last = now - last > period + 5.0, now
+            await self._refresh_group_lag()
+            if blocked or not self._consume_stalled(self.settings.engine_consume_exit_s, loop=True):
+                strikes = 0
+                continue
+            strikes += 1
+            if strikes >= 3:
+                log.error("consume_stalled", age_s=round(self.consume_age_s() or 0.0, 1))
+                self._fail()
+                return
+
+    async def _refresh_group_lag(self) -> None:
+        try:
+            groups: Any = await self.redis.xinfo_groups(self.settings.events_stream)
+        except REDIS_ERRORS as exc:
+            if "no such key" not in str(exc).lower():
+                log.warning("group_lag_failed", error=str(exc)[:200])
+            self.group_lag = self.group_pending = None
+            return
+        for group in groups or []:
+            info = {_text(k): v for k, v in dict(group).items()}
+            if _text(info.get("name")) == self.settings.engine_group:
+                lag, pending = info.get("lag"), info.get("pending")
+                self.group_lag = int(lag) if lag is not None else None
+                self.group_pending = int(pending) if pending is not None else None
+                return
+        self.group_lag = self.group_pending = None
+
+    def _fail(self) -> None:
+        self.exit_code = 1
+        self.stopping.set()
+
+    def _task_done(self, task: asyncio.Task[None]) -> None:
+        if self.stopping.is_set():
+            return
+        name = task.get_name()
+        if task.cancelled():
+            log.error("task_cancelled", task=name)
+        elif (exc := task.exception()) is not None:
+            log.error("task_failed", task=name, exc_info=exc)
+        else:
+            log.error("task_exited", task=name)
+        self._fail()
+
+    def _spawn(self) -> None:
+        loops: dict[str, Callable[[], Coroutine[Any, Any, None]]] = {
+            "consume": self.consume,
+            "timers": self.timers,
+            "commit": self.committer,
+            "control": self.control,
+            "pdm": self.pdm,
+            "watch": self.watch,
+        }
+        for name in TASKS:
+            task = asyncio.create_task(loops[name](), name=name)
+            task.add_done_callback(self._task_done)
+            self.tasks[name] = task
+
+    async def run(self) -> int:
+        """Run until SIGTERM/SIGINT (exit code 0) or until a loop dies (exit code 1: the
+        container restarts and resumes from the checkpoint, STAB-2)."""
         await self.start()
-        tasks = [
-            asyncio.create_task(self.consume(), name="consume"),
-            asyncio.create_task(self.timers(), name="timers"),
-            asyncio.create_task(self.committer(), name="commit"),
-            asyncio.create_task(self.control(), name="control"),
-            asyncio.create_task(self.pdm(), name="pdm"),
-        ]
+        self._spawn()
         try:
             await self.stopping.wait()
         finally:
+            tasks = list(self.tasks.values())
             for task in tasks:
                 task.cancel()
             for task in tasks:
@@ -638,9 +844,16 @@ class EngineService:
             with contextlib.suppress(Exception):
                 await self.commit()
             await self.writer.aclose()
+        if self.exit_code:
+            log.error("engine_exit", code=self.exit_code)
+        return self.exit_code
 
 
-async def run_service() -> None:
+def _text(value: object) -> str:
+    return value.decode() if isinstance(value, bytes) else str(value)
+
+
+async def run_service() -> int:
     log_ = configure_logging("engine")
     cfg = load_config_or_exit("engine")
     settings = EngineSettings()
@@ -649,7 +862,11 @@ async def run_service() -> None:
     clock = create_clock(twin, RedisKV(redis))
     service = EngineService(cfg, settings, clock, redis)
     server = await start_health_server(
-        "engine", port=settings.health_port, ready=lambda: service.ready, stats=service.stats
+        "engine",
+        port=settings.health_port,
+        ready=service.is_ready,
+        stats=service.stats,
+        reasons=lambda: service.health()[1],
     )
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -657,10 +874,11 @@ async def run_service() -> None:
     log_.info("engine_starting", port=settings.health_port, clock=twin.clock_mode)
     if isinstance(clock, SimClock):
         async with clock:
-            await service.run()
+            code = await service.run()
     else:
-        await service.run()
+        code = await service.run()
     server.close()
     await server.wait_closed()
     await redis.aclose()
-    log_.info("engine_stopped")
+    log_.info("engine_stopped", code=code)
+    return code

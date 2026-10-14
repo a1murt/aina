@@ -8,7 +8,9 @@
 #
 #   DEMO_FRESH=1   start from an empty demo database and an empty Redis DB (drops the database
 #                  named in DATABASE_URL and flushes the Redis DB of REDIS_URL — demo data only)
-#   DEMO_SKIP_BUILD=1  reuse the images that exist
+#   DEMO_SKIP_BUILD=1  reuse the images that exist. Not after a change of config/*.yaml keys:
+#                  ./config is mounted live and the config models forbid unknown keys, so an
+#                  old image of ANY Python service (collector included) exits at its next start
 set -euo pipefail
 
 COMPOSE=${COMPOSE:-docker compose}
@@ -81,6 +83,12 @@ step "import $CASE_FILE (as admin)"
 $DC run --rm --no-deps -v "$ROOT/data/case:/app/data/case:ro" api \
   python -m qost_api import "$CASE_FILE" --user admin
 
+# Template shift reports for the last closed shifts (the director's «last shift report»); an
+# image without the command only skips this step.
+step "shift reports (last 3 closed shifts)"
+$DC run --rm --no-deps api python -m qost_api seed-reports --last 3 \
+  || echo "seed-reports skipped (command unavailable or failed; not fatal)"
+
 step "live services (sim, collector, engine, api, notifier, web)"
 $DC up -d --no-deps --wait --wait-timeout 300 sim collector engine api notifier web
 
@@ -94,4 +102,5 @@ mkdir -p var
 printf '%s\n' "${TIMES[@]}" "total: ${TOTAL} s" > var/demo_timing.txt
 echo
 echo "Web: http://localhost:3000   API: http://localhost:8000/api/docs   console: make demo-reset"
+echo "Before the show: docker compose -p qost restart engine && make demo-reset && make demo-check"
 echo "Users: director, master, operator (ASSY-1), maintenance, quality, admin; password = DEMO_PASSWORD"

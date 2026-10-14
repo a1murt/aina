@@ -63,8 +63,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_live(_args: argparse.Namespace) -> int:
     from qost_engine.service import run_service
 
-    asyncio.run(run_service())
-    return 0
+    return asyncio.run(run_service())
 
 
 def main(argv: list[str] | None = None) -> int:

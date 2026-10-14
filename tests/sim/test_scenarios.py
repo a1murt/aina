@@ -15,10 +15,15 @@ import pytest
 
 from qost_sim.live import warm_model
 from qost_sim.model import PlantModel, Rec
-from qost_sim.model.scenarios import InjectError, check_configured_scenarios, parse_inject
+from qost_sim.model.scenarios import (
+    InjectError,
+    check_configured_scenarios,
+    parse_inject,
+    schedule_history_scenarios,
+)
 from sim_support import of, run
 from support import mutate
-from twin_core.config import TwinConfig, load_config
+from twin_core.config import ConfigError, TwinConfig, load_config
 from twin_core.config.simulation import DefectMultiplierInject, SetStateInject
 from twin_core.events import FIRST_EXIT_RESULTS
 
@@ -284,16 +289,43 @@ def test_s5_with_wait_policy_starves_the_first_line(config_copy: Path) -> None:
 # --------------------------------------------------------------------------- schedule / inject
 
 
-def test_at_min_scenarios_are_applied_at_demo_start(cfg: TwinConfig) -> None:
+def test_at_min_scenarios_are_applied_relative_to_demo_start(cfg: TwinConfig) -> None:
     model = warm_model(cfg)
     scheduled = {i.scenario_id: i.t for i in model.interventions}
     demo_s = model.sec(demo(cfg))
-    expected = {s.id for s in cfg.simulation.scenarios if s.at_min is not None}
-    assert set(scheduled) == expected == {"S2-FILTER-TREND", "S3-ABB04-WEAR"}
-    assert all(t == pytest.approx(demo_s) for t in scheduled.values())
+    at_min = {s.id: s.at_min for s in cfg.simulation.scenarios if s.at_min is not None}
+    assert set(scheduled) == set(at_min) == {"S2-FILTER-TREND", "S3-ABB04-WEAR"}
+    for scenario_id, t in scheduled.items():
+        assert t == pytest.approx(demo_s + (at_min[str(scenario_id)] or 0.0) * 60.0)
+    # DEMO-5: S3 is inside the history (negative at_min), so the wear shows in the telemetry
+    # before 07:00 and ABB-04 is already worn when the demo starts
+    assert (at_min["S3-ABB04-WEAR"] or 0.0) < 0
+    assert model.units["ABB-04"].d == pytest.approx(0.75, abs=0.01)
     model.run_until(model.env.now + 1)
     assert model.units["BOOTH-02"].filter_dp() == pytest.approx(380, abs=0.5)
-    assert model.units["ABB-04"].d == pytest.approx(0.75)
+
+
+def test_negative_at_min_is_part_of_the_backfill_history(cfg: TwinConfig) -> None:
+    """The backfill schedules the same pre-demo scenarios as the live warm-up (determinism)."""
+    start = demo(cfg) - timedelta(hours=6)
+    model = PlantModel(cfg, start=start)
+    schedule_history_scenarios(cfg, model, demo(cfg))
+    s3 = cfg.scenarios["S3-ABB04-WEAR"]
+    assert [i.scenario_id for i in model.interventions] == [s3.id]
+    assert model.interventions[0].t == pytest.approx(
+        model.sec(demo(cfg)) + (s3.at_min or 0.0) * 60.0
+    )
+    late = PlantModel(cfg, start=demo(cfg) - timedelta(minutes=30))
+    schedule_history_scenarios(cfg, late, demo(cfg))
+    assert late.interventions == []  # already in the past for a model started later
+
+
+def test_at_min_before_the_history_is_rejected(config_copy: Path) -> None:
+    path = config_copy / "simulation.yaml"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("at_min: -90", "at_min: -100000"), encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"before clock\.backfill_from"):
+        load_config(config_copy, tag_map=False)
 
 
 def test_configured_scenarios_are_supported(cfg: TwinConfig) -> None:

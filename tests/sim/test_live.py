@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from qost_sim.bus import MemoryBus
 from qost_sim.live import LiveRunner, RunnerError, warm_model
@@ -206,3 +207,62 @@ async def test_commands_need_a_ready_simulator(cfg: TwinConfig) -> None:
     await runner.start_up()
     assert runner.state == "paused"
     assert clock(_bus).paused
+
+
+class DownBus(MemoryBus):
+    """A bus whose Redis raises redis-py errors (not builtins.ConnectionError) while ``down``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    async def get(self, key: str) -> str | None:
+        if self.down:
+            raise RedisConnectionError("Error 111 connecting to redis:6379")
+        return await super().get(key)
+
+    async def set(self, key: str, value: str) -> None:
+        if self.down:
+            raise RedisConnectionError("Error 111 connecting to redis:6379")
+        await super().set(key, value)
+
+
+async def test_redis_errors_do_not_stop_the_simulation(cfg: TwinConfig) -> None:
+    """STAB-3: redis.exceptions.ConnectionError while publishing the clock keeps simulating."""
+    bus = DownBus()
+    runner, mono, _ = make_runner(cfg, bus)
+    demo = cfg.simulation.clock.demo_start
+    await runner.start_up()
+    bus.down = True
+    await advance(runner, mono, 5)
+    assert runner.plant_time == demo + timedelta(minutes=5)
+    await runner.pause()
+    await runner.start()
+    bus.down = False
+    await advance(runner, mono, 1)
+    async with runner._lock:
+        await runner._publish_clock()
+    assert clock(bus).plant_time == demo + timedelta(minutes=6)
+
+
+async def test_demo_auto_pause_after_the_configured_minutes(cfg: TwinConfig) -> None:
+    """DEMO-11/STAB-7: a stand left running pauses itself (no drift into November)."""
+    after = cfg.simulation.clock.demo_auto_pause_after_min
+    assert after is not None
+    runner, mono, bus = make_runner(cfg)
+    demo = cfg.simulation.clock.demo_start
+    await runner.start_up()
+    await runner.set_speed(300)
+    for _ in range(int(after * 60 / 300 / 5) + 3):  # the pacing loop: advance only while running
+        mono.advance(5.0)
+        async with runner._lock:
+            if runner.state == "running":
+                await runner._advance()
+    assert runner.state == "paused"
+    assert runner.status()["paused"] is True
+    assert runner.plant_time == demo + timedelta(minutes=after)
+    assert clock(bus).paused
+    await runner.start()  # «Пуск» continues past the threshold on demand
+    await advance(runner, mono, 2)
+    assert runner.status()["state"] == "running"
+    assert runner.plant_time == demo + timedelta(minutes=after + 10)
