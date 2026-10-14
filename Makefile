@@ -19,8 +19,8 @@ HOST_REDIS_URL ?= redis://localhost:6379/0
 export NEXT_TELEMETRY_DISABLED := 1
 
 .PHONY: help up down ps logs check test fmt py-lint py-type py-test web-check web-install \
-	migrate config-check seed demo demo-reset demo-down tagmap ml-dataset ml-train history \
-	forecast-validate
+	migrate config-check seed demo demo-reset demo-check demo-down tagmap ml-dataset ml-train \
+	history forecast-validate
 
 help: ## list targets
 	@grep -E '^[a-z][a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -103,6 +103,13 @@ demo-reset: ## reset the live tail to demo_start (sim reset handshake; engine dr
 	$(COMPOSE) --profile demo exec -T sim python -c "import urllib.request as u; \
 		r = u.Request('http://127.0.0.1:8100/reset', data=b'{}', method='POST', \
 		headers={'Content-Type': 'application/json'}); print(u.urlopen(r, timeout=60).read().decode())"
+
+# MTD output at demo_start of the demo history (seed clock.random_seed); empty = not compared.
+DEMO_MTD ?= 2511
+
+demo-check: ## pre-show check of the live stand: services ready, engine reads, clock at demo_start (STAB-5)
+	$(COMPOSE) --profile demo exec -T api python - $(if $(DEMO_MTD),--mtd-expect $(DEMO_MTD),) \
+		$(DEMO_CHECK_ARGS) < tools/demo_check.py
 
 demo-down: ## stop the demo services (infrastructure keeps running)
 	$(COMPOSE) --profile demo stop sim collector engine api notifier web

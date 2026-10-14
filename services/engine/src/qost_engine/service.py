@@ -836,7 +836,11 @@ async def run_service() -> int:
     clock = create_clock(twin, RedisKV(redis))
     service = EngineService(cfg, settings, clock, redis)
     server = await start_health_server(
-        "engine", port=settings.health_port, ready=service.is_ready, stats=service.stats
+        "engine",
+        port=settings.health_port,
+        ready=service.is_ready,
+        stats=service.stats,
+        reasons=lambda: service.health()[1],
     )
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -26,6 +26,7 @@ from qost_engine.settings import EngineSettings
 from twin_core.clock import ManualClock
 from twin_core.config import TwinConfig
 from twin_core.events import AnyEvent, dumps
+from twin_core.health import start_health_server
 from twin_core.redis_errors import REDIS_ERRORS
 
 
@@ -343,3 +344,49 @@ async def test_failed_reset_is_logged_not_acked_and_control_survives(cfg: TwinCo
     finally:
         svc.stopping.set()
         assert await asyncio.wait_for(run, timeout=5) == 0
+
+
+async def test_readyz_http_is_503_with_the_reason(cfg: TwinConfig) -> None:
+    svc, _clock = make_service(cfg, FakeRedis())
+    server = await start_health_server(
+        "engine",
+        port=0,
+        host="127.0.0.1",
+        ready=svc.is_ready,
+        stats=svc.stats,
+        reasons=lambda: svc.health()[1],
+    )
+    port = server.sockets[0].getsockname()[1]
+    run = asyncio.create_task(svc.run())
+    try:
+        await wait_for(lambda: svc.is_ready())
+        status, body = await http_get(port, "/readyz")
+        assert (status, body["status"]) == (200, "ready")
+        svc.redis.xreadgroup = _hang  # type: ignore[method-assign]
+        await asyncio.sleep(0.05)  # the read in flight returns, the next one hangs
+        svc.last_consume_wall = time.monotonic() - 20.0
+        status, body = await http_get(port, "/readyz")
+        assert status == 503
+        assert body["not_ready"][0].startswith("consume_stale")
+        status, stats = await http_get(port, "/stats")
+        assert stats["tasks_alive"]["consume"] is True
+        assert stats["last_consume_age_s"] >= 20
+    finally:
+        svc.stopping.set()
+        await asyncio.wait_for(run, timeout=5)
+        server.close()
+        await server.wait_closed()
+
+
+async def _hang(*_a: Any, **_k: Any) -> Any:
+    await asyncio.sleep(3600)
+
+
+async def http_get(port: int, path: str) -> tuple[int, dict[str, Any]]:
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(f"GET {path} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+    await writer.drain()
+    raw = await reader.read()
+    writer.close()
+    head, _, body = raw.partition(b"\r\n\r\n")
+    return int(head.split()[1]), json.loads(body)
