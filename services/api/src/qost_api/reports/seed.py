@@ -12,14 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from qost_api.auth import Principal
+from qost_api.auth import SYSTEM_PRINCIPAL, Principal
 from qost_api.reports.service import ReportError, ReportService, ShiftReportRequest
 from twin_core.calendar import ShiftInstance
 from twin_core.clock import ensure_utc, to_plant_tz
 from twin_core.config import TwinConfig
 from twin_core.report import Lang
 
-SYSTEM_PRINCIPAL = Principal(username="system", role="admin", user_id=None, display_name="Система")
 LOOKBACK = timedelta(days=14)
 """How far back closed working shifts are looked for (covers long weekends and holidays)."""
 
@@ -80,4 +79,4 @@ async def seed_reports(
     return out
 
 
-__all__ = ["SYSTEM_PRINCIPAL", "SeededReport", "closed_shifts", "seed_reports"]
+__all__ = ["SeededReport", "closed_shifts", "seed_reports"]

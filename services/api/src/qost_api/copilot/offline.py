@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
@@ -30,6 +30,7 @@ from qost_api.copilot import text as tx
 from qost_api.copilot.tools import TOOLS_BY_NAME, Toolbox, ToolError
 from qost_api.plan_ceiling import line_ceiling
 from twin_core.config import TwinConfig
+from twin_core.forecast.calibration import targets_from_config
 from twin_core.kpi import minutes_to_units
 
 REFUSAL = (
@@ -240,12 +241,41 @@ PLAN = _rx(
     r"достигн",
     r"дотян",
     r"прогноз(?! отказ)",
-    r"5 ?500\b",
-    r"4 ?800\b",
     r"цел[ьи] завода",
     r"сколько (?:\w+ )?(?:выпустим|сделаем|соберем)",
     r"к концу месяца",
 )
+
+
+def _qty_pattern(qty: int) -> str:
+    """``5500`` -> ``5 ?500``: a quantity written with or without a thousands space."""
+    digits = str(qty)
+    head = len(digits) % 3 or 3
+    groups = [digits[:head]] + [digits[i : i + 3] for i in range(head, len(digits), 3)]
+    return " ?".join(groups)
+
+
+def qty_rx(values: Iterable[int | None]) -> re.Pattern[str] | None:
+    """Whole-number match of any of ``values`` in a normalized question (None: no values)."""
+    pats = sorted({_qty_pattern(int(v)) for v in values if v}, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(pats) + r")\b") if pats else None
+
+
+def target_quantities(cfg: TwinConfig) -> dict[str, set[int]]:
+    """Configured plan quantities by target (``rules.yaml`` plant target, ``plant.yaml`` plan)."""
+    out: dict[str, set[int]] = {
+        "plant_target": {cfg.rules.thresholds.plant_target_per_month},
+        "line_plan": set(),
+    }
+    for month in sorted({entry.month for entry in cfg.plant.plan}):
+        targets = targets_from_config(cfg, month)
+        if targets.plant_target:
+            out["plant_target"].add(targets.plant_target)
+        if targets.line_plan:
+            out["line_plan"].add(targets.line_plan)
+    return out
+
+
 RISK = _rx(r"зон\w* риска", r"в риске", r"под угрозой", r"риск отказ", r"может (?:\w+ )?отказ")
 STOPPED = _rx(r"стоит\b", r"стоят\b", r"остановил", r"остановлен", r"встал", r"не работает")
 WHY = _rx(r"почему", r"из-за чего", r"отчего", r"в чем причин", r"причин")
@@ -437,6 +467,8 @@ def _finish(text: str) -> str:
 class OfflineCopilot:
     def __init__(self, cfg: TwinConfig) -> None:
         self.cfg = cfg
+        self._targets = target_quantities(cfg)
+        self._target_rx = qty_rx(q for qs in self._targets.values() for q in qs)
 
     # ------------------------------------------------------------------ routing
 
@@ -455,7 +487,9 @@ class OfflineCopilot:
             add("advice")
         elif COST.search(q):
             add("cost")
-        elif PLAN.search(q) and not RISK.search(q) and not EQ_RANK.search(q):
+        elif (
+            PLAN.search(q) or (self._target_rx is not None and self._target_rx.search(q))
+        ) and not (RISK.search(q) or EQ_RANK.search(q)):
             add("plan")
         elif RISK.search(q) and not e.equipment:
             add("risk")
@@ -601,6 +635,20 @@ class OfflineCopilot:
                 return str(s.name_ru)
         return f"смена {code}"
 
+    def _dedup_stops(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """One record per stop: a line-level and an equipment-level record of the same stop
+        (same start, reason and duration) collapse into the equipment one."""
+        kept: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+        for item in items:
+            key = (item.get("start_ts"), item.get("reason_code"), item.get("duration_s"))
+            prev = kept.get(key)
+            if prev is None or (
+                item.get("entity") in self.cfg.equipment
+                and prev.get("entity") not in self.cfg.equipment
+            ):
+                kept[key] = item
+        return list(kept.values())
+
     def _why(self, item: dict[str, Any]) -> str:
         """Reason of a downtime record in words."""
         return str(item.get("reason_name_ru") or self._reason(item.get("reason_code")))
@@ -692,9 +740,11 @@ class OfflineCopilot:
         base = r.get("base") or {}
         needed: dict[str, dict[str, Any]] = r.get("shifts_needed_for_target") or {}
         p_reach: dict[str, float] = base.get("p_reach") or {}
-        if re.search(r"\b5 ?500\b|\bцел", c.q) and "plant_target" in p_reach:
+        plant_rx = self._named_target_rx("plant_target", needed)
+        line_rx = self._named_target_rx("line_plan", needed)
+        if (re.search(r"\bцел", c.q) or plant_rx.search(c.q)) and "plant_target" in p_reach:
             order = ["plant_target"]
-        elif re.search(r"\b4 ?800\b|план\w* лини", c.q) and "line_plan" in p_reach:
+        elif (re.search(r"план\w* лини", c.q) or line_rx.search(c.q)) and "line_plan" in p_reach:
             order = ["line_plan"]
         else:  # "выполнить план": the line plan first, then the plant target
             order = sorted(p_reach, key=lambda t: t != "line_plan")
@@ -714,6 +764,15 @@ class OfflineCopilot:
         if bullets:
             bullets.insert(0, "Лучшие рычаги (прогноз до конца месяца):")
         return _Block(verdict, bullets)
+
+    def _named_target_rx(self, target: str, needed: dict[str, dict[str, Any]]) -> re.Pattern[str]:
+        """Quantities that name ``target`` in a question: configured ones and the payload's
+        (``shifts_needed_for_target[target][*].qty``, the database plan when imported)."""
+        sets = needed.get(target) or {}
+        qtys = self._targets.get(target, set()) | {
+            int(x["qty"]) for x in sets.values() if isinstance(x, dict) and x.get("qty")
+        }
+        return qty_rx(qtys) or re.compile(r"(?!)")
 
     def _target_verdict(
         self, target: str, base: dict[str, Any], needed: dict[str, dict[str, Any]]
@@ -1048,7 +1107,9 @@ class OfflineCopilot:
         if stops is not None:
             items = stops.get("items") or []
             if items:
-                top = sorted(items, key=lambda i: -float(i.get("duration_s") or 0))[:3]
+                top = sorted(
+                    self._dedup_stops(items), key=lambda i: -float(i.get("duration_s") or 0)
+                )[:3]
                 bullets.append(
                     "Простои: "
                     + "; ".join(

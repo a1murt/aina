@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     from qost_api.auth import Principal
     from qost_api.settings import ApiSettings
-    from twin_core.clock import Clock
+    from twin_core.clock import Clock, KeyValueStore
     from twin_core.config import TwinConfig
 
 DEFAULT_PORT = 8000
@@ -144,30 +144,41 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
-async def _plant_now(cfg: TwinConfig, settings: ApiSettings, at: str | None) -> datetime:
+async def _plant_now(
+    cfg: TwinConfig,
+    settings: ApiSettings,
+    at: str | None,
+    *,
+    store: KeyValueStore | None = None,
+) -> datetime:
     """Plant time for a CLI command: ``--at``, the simulator clock in Redis, else the seed
-    time (demo start in sim mode, wall time otherwise)."""
+    time (demo start in sim mode, wall time otherwise).
+
+    A stale clock (the simulator stopped writing, e.g. after ``make demo-down`` with Redis
+    still up) is not extrapolated: the stored ``plant_time`` is where the simulator resumes."""
     from twin_core.clock import RedisKV, SimClock, SystemClock, ensure_utc
 
     if at:
         moment = datetime.fromisoformat(at.replace("Z", "+00:00"))
         return ensure_utc(moment if moment.tzinfo else moment.replace(tzinfo=cfg.timezone))
-    if settings.clock_mode == "sim" and settings.redis_enabled:
-        sim = SimClock(RedisKV.from_url(settings.redis_url))
+    if settings.clock_mode == "sim" and (store is not None or settings.redis_enabled):
+        sim = SimClock(store if store is not None else RedisKV.from_url(settings.redis_url))
         try:
-            if await sim.refresh() is not None:
-                return sim.now()
+            state = await sim.refresh()
+            if state is not None:
+                return state.plant_time if sim.is_stale else sim.now()
         except Exception:  # no Redis or no clock yet (redis errors are not OSError)
             pass
     return _seed_now(cfg, settings, SystemClock())
 
 
 def cmd_seed_reports(args: argparse.Namespace) -> int:
+    from qost_api.auth import SYSTEM_PRINCIPAL
     from qost_api.forecast.data import DbForecastBackend
     from qost_api.forecast.service import ForecastService
     from qost_api.llm import create_provider
     from qost_api.reports.data import DbReportBackend
-    from qost_api.reports.seed import SYSTEM_PRINCIPAL, seed_reports
+    from qost_api.reports.seed import seed_reports
     from qost_api.reports.service import ReportService
     from qost_api.settings import ApiSettings
     from twin_core.clock import ManualClock

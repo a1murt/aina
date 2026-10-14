@@ -60,6 +60,10 @@ class Principal:
         return self.role != "operator" or line in self.lines
 
 
+SYSTEM_PRINCIPAL = Principal(username="system", role="admin", user_id=None, display_name="Система")
+"""Internal caller for background jobs (forecast warm-up, ``seed-reports``); not a DB user."""
+
+
 # --------------------------------------------------------------------------- passwords
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import time
 from collections.abc import Iterator
 from datetime import timedelta
@@ -250,6 +251,24 @@ async def test_concurrent_levers_compute_once_and_minutes_are_cached(
     assert len(computed) == 3
 
 
+async def test_levers_are_recomputed_for_a_new_calibration(
+    cfg: TwinConfig, backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    computed = _counting(monkeypatch, "levers")
+    service = ForecastService(cfg, ManualClock(cfg.simulation.clock.demo_start), backend)
+    who = Principal("director", "director", 1)
+    first = await service.levers(None, who, n_runs=100)
+    await service.levers(None, who, n_runs=100)
+    assert len(computed) == 1
+    # same plant minute (a paused plant), but a new calibration snapshot
+    (old_id,) = backend.snapshots
+    backend.snapshots = {7: dataclasses.replace(backend.snapshots[old_id], id=7)}
+    service._snapshots = {}
+    again = await service.levers(None, who, n_runs=100)
+    assert len(computed) == 2, "a new calibration is not served from the old levers"
+    assert (first.calibration_id, again.calibration_id) == (old_id, 7)
+
+
 async def test_effect_is_cached_and_warm_fills_the_director_caches(
     cfg: TwinConfig, backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -310,3 +329,53 @@ async def test_warm_loop_on_start_pause_and_reset() -> None:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+async def test_warm_loop_retries_a_failed_start_up_warm_up_a_bounded_number_of_times() -> None:
+    from types import SimpleNamespace
+
+    from qost_api.forecast.warm import warm_loop
+
+    class Flaky:
+        epoch = 0
+
+        def __init__(self, failures: int) -> None:
+            self.failures = failures
+            self.attempts = 0
+            self.warmed = 0
+
+        def observe(self, now: Any) -> bool:
+            return False
+
+        async def warm(self, principal: Principal) -> dict[str, int]:
+            self.attempts += 1
+            if self.attempts <= self.failures:
+                raise RuntimeError("database is not ready")
+            self.warmed += 1
+            return {"levers_ms": 1, "effect_ms": 1}
+
+    async def run(stub: Flaky) -> None:
+        clock = SimpleNamespace(now=lambda: None, state=SimpleNamespace(paused=False))
+        task = asyncio.create_task(
+            warm_loop(
+                cast(Any, stub),
+                cast(Any, clock),
+                settle_s=0.0,
+                poll_s=0.005,
+                retry_s=0.001,
+                max_retries=3,
+            )
+        )
+        try:
+            await asyncio.sleep(0.15)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    recovers = Flaky(failures=2)
+    await run(recovers)
+    assert (recovers.attempts, recovers.warmed) == (3, 1)  # two failures, then warmed once
+    broken = Flaky(failures=100)
+    await run(broken)
+    assert (broken.attempts, broken.warmed) == (4, 0)  # the first try and 3 retries

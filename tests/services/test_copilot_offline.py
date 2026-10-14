@@ -6,21 +6,29 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 import qost_api.app  # noqa: F401  (imports the routes before the copilot: no import cycle)
 from qost_api.auth import Principal
-from qost_api.copilot.offline import REFUSAL, OfflineCopilot, find_entities
+from qost_api.copilot.offline import (
+    REFUSAL,
+    OfflineCopilot,
+    find_entities,
+    qty_rx,
+    target_quantities,
+)
 from qost_api.copilot.tools import Toolbox
-from twin_core.config import TwinConfig
+from twin_core.config import TwinConfig, load_config
 
 TODAY = date(2026, 10, 16)
 
 GUARANTEED = {
-    # the three prompts of the copilot panel (web/messages ru.json copilot.ex1–ex3)
-    "Почему вчера просела сварка?": (
+    # the three prompts of the copilot panel (web/messages ru.json copilot.ex1–ex3); ex1 names
+    # a date: on the stand data «вчера» (15.10) is above the month average for every area
+    "Почему 08.10 просела сварка?": (
         "why_drop",
         {"get_kpi", "get_losses", "get_downtime"},
     ),
@@ -46,6 +54,7 @@ QUESTIONS = [
     "Какое оборудование чаще всего ломается?",
     "Сколько стоит час простоя окраски?",
     # the prompts of the panel and the other phrasings of the audit
+    "Почему 08.10 просела сварка?",
     "Выполним ли план месяца и что мешает?",
     "Какое оборудование больше всего простаивало?",
     "Почему мы не выполняем план 5 500?",
@@ -523,6 +532,85 @@ async def test_why_did_welding_drop_compares_yesterday_with_the_month(
     assert "Сильнее всего просела составляющая «эффективность»" in res.text
     assert "Главная потеря — брак" in res.text
     assert "«Обрыв цепи»" in res.text  # the stops of the day, in words
+
+
+async def test_suggested_drop_prompt_names_its_date(
+    cfg: TwinConfig, ran: list[tuple[str, dict[str, Any]]]
+) -> None:
+    res = await OfflineCopilot(cfg).answer("Почему 08.10 просела сварка?", toolbox(cfg), TODAY)
+    kpi = [a for name, a in ran if name == "get_kpi"]
+    assert (kpi[0]["code"], kpi[0]["from"], kpi[0]["to"]) == ("WELD", "2026-10-08", "2026-10-08")
+    assert res.text.startswith("OEE участка «Сварка» (08.10)")
+
+
+async def test_a_stop_listed_for_the_line_and_the_unit_is_shown_once(
+    cfg: TwinConfig, ran: list[tuple[str, dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    filter_change = {
+        "start_ts": "2026-10-13T03:44:00+00:00",
+        "open": False,
+        "duration_s": 2400.0,
+        "reason_code": "PM-FILTER",
+        "reason_name_ru": "Замена фильтра",
+    }
+    stops = [
+        {**filter_change, "entity": "PAINT-1", "line": "PAINT-1"},
+        {**filter_change, "entity": "BOOTH-02", "line": "PAINT-1"},
+        {**filter_change, "entity": "BOOTH-01", "start_ts": "2026-10-13T13:07:00+00:00"},
+    ]
+    monkeypatch.setitem(globals(), "STOPS", stops)
+    res = await OfflineCopilot(cfg).answer("Почему 13.10 просела окраска?", toolbox(cfg), TODAY)
+    line = next(x for x in res.text.splitlines() if "Простои:" in x)
+    assert line.count("«Замена фильтра», 40") == 2, line  # BOOTH-02 and BOOTH-01, not PAINT-1
+    assert "BOOTH-02" in line
+    assert "BOOTH-01" in line
+    assert "Окраска-1 —" not in line
+
+
+def _config_with_target(config_copy: Path, qty: int) -> TwinConfig:
+    rules = config_copy / "rules.yaml"
+    rules.write_text(
+        rules.read_text(encoding="utf-8").replace(
+            "plant_target_per_month: 5500", f"plant_target_per_month: {qty}"
+        ),
+        encoding="utf-8",
+    )
+    plant = config_copy / "plant.yaml"
+    plant.write_text(
+        plant.read_text(encoding="utf-8").replace(
+            "level: plant_target, qty: 5500", f"level: plant_target, qty: {qty}"
+        ),
+        encoding="utf-8",
+    )
+    return load_config(config_copy, tag_map=False)
+
+
+def test_target_quantities_come_from_the_config(cfg: TwinConfig, config_copy: Path) -> None:
+    assert target_quantities(cfg) == {"plant_target": {5500}, "line_plan": {4800}}
+    rx = qty_rx([5500, 4800])
+    assert rx is not None
+    for hit in ("выполним 5 500", "выполним 5500", "4 800 авто"):
+        assert rx.search(hit), hit
+    for miss in ("15 500", "5 5001"):
+        assert not rx.search(miss), miss
+    assert qty_rx([]) is None
+    other = _config_with_target(config_copy, 6000)
+    assert target_quantities(other)["plant_target"] == {6000}
+    assert OfflineCopilot(other).intents("Будет 6 000 машин?") == ["plan"]
+    assert OfflineCopilot(other).intents("Будет 5 500 машин?") != ["plan"]
+    assert OfflineCopilot(cfg).intents("Будет 5 500 машин?") == ["plan"]
+    assert OfflineCopilot(cfg).intents("Будет 4800 машин?") == ["plan"]
+
+
+async def test_advice_target_also_comes_from_the_levers_payload(
+    config_copy: Path, ran: list[tuple[str, dict[str, Any]]]
+) -> None:
+    other = _config_with_target(config_copy, 6000)  # the database plan (payload) says 5 500
+    res = await OfflineCopilot(other).answer(
+        "Что посоветуешь сделать, чтобы выполнить 5 500?", toolbox(other), TODAY
+    )
+    assert res.text.startswith("Цель завода 5\u00a0500 при текущем темпе недостижима")
+    assert "План линии" not in res.text
 
 
 async def test_plan_answer_names_the_ceiling_and_the_bottleneck(

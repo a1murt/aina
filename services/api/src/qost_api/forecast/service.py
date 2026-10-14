@@ -8,9 +8,11 @@ so the event loop stays responsive. Caches (per process):
   day, and the database holds at most one snapshot per key;
 * baseline paths by (month, calibration, state digest, seed, runs) — a what-if request then
   computes only the scenario;
-* levers by (epoch, month, seed, runs, plant minute) — a request in the same plant minute (a
-  paused plant) is answered from the cache; a later one gets the newest result of the last
-  :data:`LEVERS_MAX_AGE` of plant time at once while one refresh runs in the background;
+* levers by (epoch, month, seed, runs, calibration, plant minute) — a request in the same plant
+  minute (a paused plant) is answered from the cache; a later one gets the newest result of the
+  last :data:`LEVERS_MAX_AGE` of plant time at once while one refresh runs in the background; a
+  new calibration starts a new series; a state change within one plant minute (an inject while
+  paused) shows with the next plant minute or warm-up (see PROGRESS «Решения»);
 * effect by (epoch, month, calibration, seed, runs, scenario, assumptions).
 
 Concurrent identical requests share one computation (six director windows opened together cost
@@ -365,7 +367,8 @@ class ForecastService:
         chosen = self._month(month, now)
         runs = self._runs(n_runs, levers=True)
         seed = default_seed(self.cfg)
-        series = ("levers", self.epoch, chosen, seed, runs)
+        snapshot = await self.calibration(principal)  # cached in memory after the first call
+        series = ("levers", self.epoch, chosen, seed, runs, snapshot.id)
         minute = ensure_utc(now).replace(second=0, microsecond=0)
         key = (*series, minute.isoformat())
         if not fresh:
