@@ -1320,6 +1320,7 @@ class EngineCore:
             period_key=alert.period_key,
             value=value,
             projection=projection,
+            raised_at=t,
         )
         if prev is not None and prev.severity == alert.severity:
             new.escalation_level = prev.escalation_level
@@ -1550,11 +1551,21 @@ class EngineCore:
                 cond.pending, cond.since = None, None
             return
         cond.clear_since = None
-        if token != cond.active_token and cond.since is not None:
-            alert = make(cond.since)
-            if alert is not None and alert.dedup_key == cond.active_key:
-                cond.active_token = token
-                self._raise(alert, t)
+        if token == cond.active_token or cond.since is None:
+            cond.down_token = cond.down_since = None
+            return
+        if _severity_rank(token) < _severity_rank(cond.active_token):
+            # hysteresis (STAB-6): a lower severity replaces the active one only after holding
+            if cond.down_token != token:
+                cond.down_token, cond.down_since = token, t
+            assert cond.down_since is not None
+            if t - cond.down_since < debounce:
+                return
+        cond.down_token = cond.down_since = None
+        alert = make(cond.since)
+        if alert is not None and alert.dedup_key == cond.active_key:
+            cond.active_token = token
+            self._raise(alert, t)
 
     def _check_buffer(self, code: str, t: float) -> None:
         b = self.st.buffers[code]
@@ -1759,6 +1770,9 @@ class EngineCore:
             msgs.append(LiveMsg("kpi", now, data, ("lines", line, dict(view))))
             if not acc.partial and elapsed >= self.params.live_oee_min_elapsed_min:
                 alert = self.evaluator.oee(line=line, period_date=day, shift=acc.code, oee=kpi.oee)
+                new_rank = _OEE_RANK[alert.rule_id] if alert is not None else 0
+                dwell = self.params.oee_alert_reissue_min * 60.0
+                hold = False
                 for rule in (AL_OEE_BELOW, AL_OEE_NEAR):
                     key = f"{rule}|{line}|{acc.key}"
                     existing = self.st.alerts.get(key)
@@ -1767,13 +1781,24 @@ class EngineCore:
                         and existing.projection
                         and (alert is None or alert.dedup_key != key)
                     ):
+                        if (
+                            new_rank < _OEE_RANK[rule]
+                            and t - (existing.raised_at or existing.ts) < dwell
+                        ):
+                            hold = True  # STAB-6: an improvement replaces it after the dwell
+                            continue
                         self._resolve(key, t)
-                if alert is not None:
+                if alert is not None and not hold:
                     prev = self.st.alerts.get(alert.dedup_key)
                     if (
                         prev is None
                         or prev.severity != alert.severity
-                        or abs(_as_float(prev.value) - _as_float(alert.value)) >= 0.005
+                        or (
+                            abs(_as_float(prev.value) - _as_float(alert.value))
+                            >= self.params.oee_alert_reissue_delta
+                            and t - (prev.raised_at or prev.ts)
+                            >= self.params.oee_alert_reissue_min * 60.0
+                        )
                     ):
                         self._raise(alert, t, projection=True)
         for area, kpi in self._area_kpis(kpis).items():
@@ -1914,6 +1939,16 @@ def line_shift_kpi(
         failures=failures,
         repair_min=repair,
     )
+
+
+_SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
+_OEE_RANK = {AL_OEE_BELOW: 2, AL_OEE_NEAR: 1}
+"""AL-O1 (below target) is worse than AL-O2 (near it); no alert = 0."""
+
+
+def _severity_rank(token: str | None) -> int:
+    """Rank of the severity in a condition token ``severity:direction``."""
+    return _SEVERITY_RANK.get((token or "").split(":")[0], 0)
 
 
 def _as_float(value: object) -> float:

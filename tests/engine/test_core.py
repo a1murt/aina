@@ -434,3 +434,38 @@ def test_live_e_and_oee_hidden_for_the_first_30_minutes_of_apt(cfg: TwinConfig) 
     later = paint(31)
     assert later["effectiveness"] is not None
     assert later["oee"] is not None
+
+
+def test_b1_severity_hysteresis_up_at_once_down_after_the_debounce(cfg: TwinConfig) -> None:
+    """STAB-6: an AL-B1 flapping critical <-> warning does not re-issue on every flip."""
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    run(core, [buffer("PBS", 0, at(100))])
+    core.advance_to(at(106))
+    b1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-B1"]
+    assert b1[-1].severity == "critical"
+    # flapping 1 <-> 0 every 30 s for 4 min: no upsert at all
+    flaps = [buffer("PBS", 1 if k % 2 == 0 else 0, at(106 + k * 0.5)) for k in range(8)]
+    effects = run(core, flaps)
+    core.advance_to(at(110.5))
+    effects += core.drain()[0]
+    assert not [a for a in of_type(effects, AlertUpsert) if a.rule_id == "AL-B1"]
+    # a lower severity that holds for alert_debounce_s (5 min) is applied
+    run(core, [buffer("PBS", 1, at(111))])
+    core.advance_to(at(115))
+    assert not [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-B1"]
+    core.advance_to(at(116.5))
+    b1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-B1"]
+    assert [a.severity for a in b1] == ["warning"]
+    # back up to critical: at once
+    effects = run(core, [buffer("PBS", 0, at(117))])
+    core.advance_to(at(117.1))
+    effects += core.drain()[0]
+    b1 = [a for a in of_type(effects, AlertUpsert) if a.rule_id == "AL-B1"]
+    assert [a.severity for a in b1] == ["critical"]
+
+
+def test_oee_projection_reissue_parameters(cfg: TwinConfig) -> None:
+    params = cfg.rules.engine
+    assert params.oee_alert_reissue_delta == pytest.approx(0.01)
+    assert params.oee_alert_reissue_min == pytest.approx(5)
