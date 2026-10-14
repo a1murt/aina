@@ -145,7 +145,7 @@ function CopilotPanel({ open, onClose }: { open: boolean; onClose: () => void })
                     ))}
                   </ul>
                 ) : null}
-                <p className={cn("whitespace-pre-line", turn.a.refused && "text-muted-foreground")}>{turn.a.answer}</p>
+                <Answer text={turn.a.answer} refused={turn.a.refused} />
                 <p className="mt-2 text-[11px] text-muted-foreground">
                   {t("meta", {
                     mode: turn.a.mode === "llm" && turn.a.model ? t("modeModel", { model: turn.a.model }) : t("modeOffline"),
@@ -165,5 +165,17 @@ function CopilotPanel({ open, onClose }: { open: boolean; onClose: () => void })
         ))}
       </div>
     </Sheet>
+  );
+}
+
+/** Answer text; the first line (the verdict) is emphasised when the details follow (VIS-2). */
+function Answer({ text, refused }: { text: string; refused: boolean }) {
+  const cut = text.indexOf("\n");
+  if (refused || cut < 0) return <p className={cn("whitespace-pre-line", refused && "text-muted-foreground")}>{text}</p>;
+  return (
+    <div className="whitespace-pre-line" data-testid="copilot-answer">
+      <p className="font-medium">{text.slice(0, cut)}</p>
+      <p className="mt-1">{text.slice(cut + 1).replace(/^\n+/, "")}</p>
+    </div>
   );
 }
