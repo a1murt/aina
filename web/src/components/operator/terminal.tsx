@@ -3,12 +3,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, CloudOff, Minus, PackageX, Plus, RefreshCw, ShieldAlert, Siren, Tag, X } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { usePlant } from "@/components/plant-context";
 import { ReasonPicker } from "@/components/reason-picker";
 import { useTicker } from "@/components/shell/header-widgets";
+import { isBehind } from "@/components/live/line-kpis";
 import { Button } from "@/components/ui/button";
+import { RatioText } from "@/components/ui/ratio-text";
 import { ApiError, api } from "@/lib/api/client";
 import type { DowntimeLive, DowntimeView, Page } from "@/lib/api/types";
 import { plantNow, useLive } from "@/lib/live-store";
@@ -41,11 +43,23 @@ function useClassifiable(line: string) {
   return { openOfLine, recent: recentItems };
 }
 
-function Toast({ text, tone, onClose }: { text: string; tone: "ok" | "queued" | "err"; onClose: () => void }) {
+const TOAST_MS = 4000;
+
+type ToastData = { id: number; text: string; tone: "ok" | "queued" | "err" };
+
+/**
+ * Auto-dismissing toast. The timer starts once per toast (`id`): `onClose` is read through a ref,
+ * so the 1 Hz re-renders of the terminal do not restart it (FE-2).
+ */
+function Toast({ id, text, tone, onClose }: ToastData & { onClose: () => void }) {
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
-    const id = setTimeout(onClose, 4000);
-    return () => clearTimeout(id);
-  }, [onClose, text]);
+    onCloseRef.current = onClose;
+  });
+  useEffect(() => {
+    const timer = setTimeout(() => onCloseRef.current(), TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [id]);
   const Icon = tone === "ok" ? CheckCircle2 : tone === "queued" ? CloudOff : X;
   return (
     <div
@@ -75,7 +89,8 @@ export function OperatorTerminal({ line }: { line: string }) {
   const { pending, submit, flush } = useOfflineQueue();
   const { openOfLine, recent } = useClassifiable(line);
   const [mode, setMode] = useState<Mode>(null);
-  const [toast, setToast] = useState<{ text: string; tone: "ok" | "queued" | "err" } | null>(null);
+  const [toast, setToastData] = useState<ToastData | null>(null);
+  const setToast = (v: Omit<ToastData, "id">) => setToastData({ ...v, id: performance.now() });
   const [busy, setBusy] = useState(false);
 
   const lineAsset = plant.lines[line];
@@ -172,7 +187,7 @@ export function OperatorTerminal({ line }: { line: string }) {
           </p>
           <div className="mt-2 h-3 rounded-full bg-muted">
             <div
-              className={cn("h-3 rounded-full", ratio < 0.95 ? "bg-isa-warning" : "bg-isa-normal")}
+              className={cn("h-3 rounded-full", isBehind(gq, plan) ? "bg-isa-warning" : "bg-isa-normal")}
               style={{ width: `${Math.min(100, ratio * 100)}%` }}
             />
           </div>
@@ -180,7 +195,9 @@ export function OperatorTerminal({ line }: { line: string }) {
         </div>
         <div className="text-right">
           <p className="text-sm text-muted-foreground">OEE</p>
-          <p className="text-4xl font-semibold tabular-nums">{plant.fmt.pct(live?.oee ?? null, 0)}</p>
+          <p className="text-4xl font-semibold tabular-nums">
+            <RatioText value={live?.oee} digits={0} testId="terminal-oee" />
+          </p>
           <p className="mt-1 text-sm text-muted-foreground tabular-nums">
             {t("defects", { n: Math.max(0, (live?.pq ?? 0) - (live?.gq ?? 0)) })}
           </p>
@@ -265,7 +282,7 @@ export function OperatorTerminal({ line }: { line: string }) {
           ) : null}
         </section>
       )}
-      {toast ? <Toast {...toast} onClose={() => setToast(null)} /> : null}
+      {toast ? <Toast key={toast.id} {...toast} onClose={() => setToastData(null)} /> : null}
     </div>
   );
 }

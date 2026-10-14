@@ -4,13 +4,23 @@ import { useTranslations } from "next-intl";
 
 import { usePlant } from "@/components/plant-context";
 import { StateBadge } from "@/components/state-badge";
+import { RatioText } from "@/components/ui/ratio-text";
 import { useLive } from "@/lib/live-store";
 import { stateMeta } from "@/lib/states";
 import { cn } from "@/lib/utils";
 
+/**
+ * Output against plan-to-now. "Behind" compares the counts as shown (whole units), so "3 / 3"
+ * is never amber because the fractional plan was 3.2 (VIS-12).
+ */
+export function isBehind(value: number, target: number): boolean {
+  const plan = Math.round(target);
+  return plan > 0 && Math.round(value) < plan * 0.95;
+}
+
 function Meter({ value, target }: { value: number; target: number }) {
   const ratio = target > 0 ? Math.min(1.25, value / target) : 0;
-  const behind = target > 0 && value < target * 0.95;
+  const behind = isBehind(value, target);
   return (
     <div className="relative mt-1.5 h-1.5 rounded-full bg-muted" aria-hidden>
       <div className={cn("absolute inset-y-0 left-0 rounded-full", behind ? "bg-isa-warning" : "bg-isa-normal")} style={{ width: `${Math.min(100, ratio * 80)}%` }} />
@@ -51,17 +61,23 @@ export function LineKpis({ large = false }: { large?: boolean }) {
             <div className="mt-3 flex items-end justify-between gap-2">
               <div>
                 <div className="text-xs text-muted-foreground">{t("oee")}</div>
-                <div className={cn("font-semibold tabular-nums", large ? "text-4xl" : "text-3xl", oeeLow && "text-severity-warning")}>
-                  {plant.fmt.pct(l?.oee ?? null)}
+                <div className={cn("font-semibold tabular-nums", large ? "text-4xl" : "text-3xl", oeeLow && "text-isa-warning-text")}>
+                  <RatioText value={l?.oee} testId={`oee-${code}`} />
                 </div>
               </div>
               <dl className="grid grid-cols-3 gap-x-3 text-right text-xs tabular-nums">
                 <dt className="text-muted-foreground">A</dt>
                 <dt className="text-muted-foreground">E</dt>
                 <dt className="text-muted-foreground">Q</dt>
-                <dd className="font-medium">{plant.fmt.pct(l?.availability ?? null, 0)}</dd>
-                <dd className="font-medium">{plant.fmt.pct(l?.effectiveness ?? null, 0)}</dd>
-                <dd className="font-medium">{plant.fmt.pct(l?.quality_ratio ?? null, 0)}</dd>
+                <dd className="font-medium">
+                  <RatioText value={l?.availability} digits={0} />
+                </dd>
+                <dd className="font-medium">
+                  <RatioText value={l?.effectiveness} digits={0} testId={`e-${code}`} />
+                </dd>
+                <dd className="font-medium">
+                  <RatioText value={l?.quality_ratio} digits={0} />
+                </dd>
               </dl>
             </div>
             <div className="mt-3 flex items-baseline justify-between text-sm tabular-nums">
