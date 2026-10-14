@@ -205,7 +205,7 @@ export function DirectorView() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">{t("title")}</h1>
-          <p className="text-sm text-muted-foreground">{p ? t("subtitle", { month: monthLabel(p.month), shifts: plant.fmt.num(p.shifts.remaining, 1) }) : " "}</p>
+          <p className="text-sm text-muted-foreground">{p ? t("subtitle", { month: monthLabel(p.month), shifts: plant.fmt.num(p.shifts.remaining, 1) }) : "\u00a0"}</p>
         </div>
         <Button onClick={() => setPanel(true)} data-testid="open-what-if" className="h-10">
           <SlidersHorizontal aria-hidden />
@@ -225,7 +225,7 @@ export function DirectorView() {
       ) : r && p && lineKey ? (
         <Verdict forecast={r} plan={p} lineKey={lineKey} targetKey={targetKey} levers={levers.data} tone={toneOfP(r.p_reach[lineKey])} onApply={applyLever} />
       ) : (
-        <div aria-hidden className="h-[54px] animate-pulse rounded-lg border bg-card" />
+        <div aria-hidden className="h-[62px] animate-pulse rounded-lg border bg-card" />
       )}
 
       {/* tiles */}
@@ -275,7 +275,8 @@ export function DirectorView() {
           />
         ) : (
           [lineKey, targetKey].map((key, i) => {
-            if (!key && i === 1) return null;
+            // while the plan loads both probability tiles keep their place (no layout shift)
+            if (!key && i === 1 && hasPlan !== null) return null;
             const qty = qtyOf(key);
             const pr = key && r ? (r.p_reach[key] ?? 0) : null;
             const tone = toneOfP(pr);
@@ -364,7 +365,7 @@ export function DirectorView() {
         <Card>
           <CardHeader
             title={t("chart.title")}
-            subtitle={r ? t("chart.subtitle", { n: plant.fmt.int(r.n_runs), ms: r.duration_ms ?? 0 }) : " "}
+            subtitle={r ? t("chart.subtitle", { n: plant.fmt.int(r.n_runs), ms: r.duration_ms ?? 0 }) : "\u00a0"}
             actions={
               <>
                 {scenRun ? <Badge tone="info">{t("chart.withScenario")}</Badge> : null}
@@ -385,7 +386,7 @@ export function DirectorView() {
         </Card>
         <Card data-testid="forecast-histogram">
           <CardHeader
-            title={t("histogram.title", { date: lastDay ? plant.fmt.dayMonth(lastDay) : "—" })}
+            title={t("histogram.title", { date: lastDay ? plant.fmt.dayMonth(lastDay) : "…" })}
             subtitle={scenRun ? t("histogram.withScenario") : t("histogram.subtitle")}
           />
           <CardBody>
