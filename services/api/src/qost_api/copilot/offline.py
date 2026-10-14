@@ -12,8 +12,10 @@ entities and the period named in the question. Anything else is refused politely
 
 Every answer starts with a verdict of one or two sentences, then bullet points; numbers use
 no-break thousands and a decimal comma, dates are ``dd.MM``, API keys are shown in Russian
-(:mod:`qost_api.copilot.text`). Plant-level losses are the losses of the period's bottleneck line:
-starvation and blocking of the other lines follow from the bottleneck and are not added up.
+(:mod:`qost_api.copilot.text`). Plant-level losses are the losses at the bottleneck, as on the
+director tile (:func:`qost_api.queries.losses.bottleneck_loss_view`): each line's losses weighted by
+its share of shifts as the bottleneck, plus quality of the output line; starvation and blocking of
+the other lines follow from the bottleneck and are not added up.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from typing import Any
 from qost_api.copilot import text as tx
 from qost_api.copilot.tools import TOOLS_BY_NAME, Toolbox, ToolError
 from qost_api.plan_ceiling import line_ceiling
+from qost_api.queries.losses import bottleneck_loss_view
 from twin_core.config import TwinConfig
 from twin_core.forecast.calibration import targets_from_config
 from twin_core.kpi import minutes_to_units
@@ -701,8 +704,9 @@ class OfflineCopilot:
     async def _bottleneck_losses(
         self, c: _Ctx
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None, _Ctx]:
-        """(bottleneck answer, losses answer, line of the losses) for the period: the losses
-        of the bottleneck line; the plant tree only when the period has no bottleneck."""
+        """(bottleneck answer, losses answer, main bottleneck line) for the period: the losses
+        at the bottleneck (:func:`bottleneck_loss_view`, the director tile's figure); the plant
+        tree only when the period has no bottleneck."""
         bn = await c.call("get_bottleneck", c.period)
         line = (bn or {}).get("overall")
         if not line and c.start == c.end == c.today:
@@ -714,11 +718,36 @@ class OfflineCopilot:
                 return await self._bottleneck_losses(
                     c.at(c.today.replace(day=1), c.today, "с начала месяца")
                 )
-        if line:
-            losses = await c.call("get_losses", {**c.period, "level": "line", "code": line})
-            return bn, losses, line, c
         losses = await c.call("get_losses", {**c.period, "level": "plant"})
+        if line:
+            view = bottleneck_loss_view(losses, bn, self.cfg.flow_lines[-1]) if losses else None
+            return bn, view, line, c
         return bn, losses, None, c
+
+    def _bn_where(self, losses: dict[str, Any], line: str | None) -> str:
+        """Where the losses were counted: one bottleneck line is named, several are not."""
+        if not line:
+            return "по заводу"
+        lines = losses.get("lines") or [{"line": line}]
+        if len(lines) == 1:
+            return f"на узком месте — линии {self._name(lines[0]['line'])}"
+        return "на узком месте"
+
+    def _weights_text(self, losses: dict[str, Any], *, shares_shown: bool = False) -> str:
+        """How the bottleneck losses were weighted, for a bullet; empty for a single line
+        without quality losses of another (output) line."""
+        lines = losses.get("lines") or []
+        if len(lines) < 2:
+            named = {x["line"] for x in lines}
+            other = any(i.get("line") not in named for i in losses.get("items") or [])
+            return "Плюс брак выходной линии — целиком." if other else ""
+        if shares_shown:
+            return "Потери линий взяты по этим долям, брак выходной линии — целиком."
+        parts = ", ".join(f"{self._name(x['line'])} — {tx.pct(x['share'], 0)}" for x in lines)
+        return (
+            f"Потери линий взяты по доле смен, когда линия была узким местом ({parts}), "
+            "брак выходной линии — целиком."
+        )
 
     def _shares_text(self, bn: dict[str, Any], limit: int = 3) -> str:
         shares = bn.get("shares") or {}
@@ -938,7 +967,7 @@ class OfflineCopilot:
         if losses is not None:
             cats = self._loss_cats(losses)[:3]
             if cats:
-                where = f"на узком месте — линии {self._name(line)}" if line else "по заводу"
+                where = self._bn_where(losses, line)
                 bullets.append(
                     f"Главные потери {where}: " + "; ".join(self._cat_text(x) for x in cats) + "."
                 )
@@ -976,7 +1005,7 @@ class OfflineCopilot:
             cats = self._loss_cats(losses)
             t = losses.get("totals") or {}
             if cats:
-                where = f"на линии {self._name(line)}" if line else "по заводу"
+                where = self._bn_where(losses, line)
                 verdict += (
                     f" Главная потеря {where} — {tx.label(tx.LOSS_RU, cats[0]['category'])}, "
                     f"{tx.cars(cats[0].get('units'))}."
@@ -987,6 +1016,10 @@ class OfflineCopilot:
                     + f"; всего {tx.cars(t.get('units'))}, {tx.money(t.get('kzt'))}."
                 )
             if line:
+                if weights := self._weights_text(
+                    losses, shares_shown=bool(self._shares_text(bn or {}))
+                ):
+                    bullets.append(weights)
                 bullets.append(
                     "Голодание и блокировка остальных линий — следствие узкого места, "
                     "в потери выпуска не добавляются."
@@ -1441,7 +1474,7 @@ class OfflineCopilot:
             where = f"линии {self._name(line)}"
         else:
             _bn, r, line, c = await self._bottleneck_losses(c)
-            where = f"на узком месте — линии {self._name(line)}" if line else "по заводу"
+            where = self._bn_where(r or {}, line)
         if r is None:
             return None
         t = r.get("totals") or {}
@@ -1465,6 +1498,8 @@ class OfflineCopilot:
             verdict += f" Больше всего — {tx.label(tx.LOSS_RU, cats[0]['category'])}."
         bullets = [self._cat_text(x) for x in cats[:4]]
         if line and not (c.e.lines or c.e.areas or c.e.equipment):
+            if weights := self._weights_text(r):
+                bullets.append(weights)
             bullets.append(
                 "Считаем на узком месте: голодание и блокировка остальных линий — его следствие."
             )

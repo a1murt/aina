@@ -23,7 +23,8 @@ const QUALITY = "quality";
  * consequences of the bottleneck and are left out, as is planned downtime (`loss = false`).
  *
  * The API totals keep their ISO 22400 meaning (sum over all lines); this is a view filter only.
- * Returns null while the bottleneck is unknown.
+ * Returns null while the bottleneck is unknown. The copilot uses the same definition
+ * (`qost_api.queries.losses.bottleneck_loss_view`); keep the two in sync.
  */
 export function bottleneckLosses(
   losses: LossesResponse,

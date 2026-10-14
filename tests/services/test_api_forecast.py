@@ -251,6 +251,32 @@ async def test_concurrent_levers_compute_once_and_minutes_are_cached(
     assert len(computed) == 3
 
 
+async def test_paused_plant_gets_levers_of_the_paused_minute_not_a_recent_one(
+    cfg: TwinConfig, backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While paused the director does not poll: the one refetch on pause must not get a stale
+    result with a refresh it would never fetch (it would mix two forecasts on one screen)."""
+    from types import SimpleNamespace
+
+    computed = _counting(monkeypatch, "levers")
+    clock = ManualClock(cfg.simulation.clock.demo_start)
+    state = SimpleNamespace(paused=False)
+    monkeypatch.setattr(clock, "state", state, raising=False)
+    service = ForecastService(cfg, clock, backend)
+    who = Principal("director", "director", 1)
+    first = await service.levers(None, who, n_runs=100)
+    clock.advance(timedelta(minutes=2))
+    state.paused = True
+    # the pause warm-up is already computing this minute: the request joins it
+    warm = asyncio.create_task(service.levers(None, who, n_runs=100, fresh=True))
+    await asyncio.sleep(0)
+    paused = await service.levers(None, who, n_runs=100)
+    assert paused is not first, "not the result of two plant minutes ago"
+    assert paused is await warm
+    assert len(computed) == 2, "the request and the warm-up share one computation"
+    assert not service._refresh, "no background refresh nobody would fetch"
+
+
 async def test_levers_are_recomputed_for_a_new_calibration(
     cfg: TwinConfig, backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:

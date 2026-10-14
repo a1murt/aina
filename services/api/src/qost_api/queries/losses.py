@@ -242,3 +242,87 @@ def loss_tree_view(
         "items": out_items,
         "shifts": shifts,
     }
+
+
+QUALITY = LossCategory.QUALITY.value
+
+
+def bottleneck_loss_view(
+    losses: Mapping[str, Any],
+    bottleneck: Mapping[str, Any] | None,
+    output_line: str | None,
+) -> dict[str, Any] | None:
+    """Losses that cost plant output, from a plant-level loss tree (``GET /kpi/losses``).
+
+    The same definition as the director tile «Потери на узком месте»
+    (``web/src/components/director/losses.ts``): only ``loss`` items of the lines that were the
+    bottleneck, each weighted by its share of shifts as the bottleneck (``sole + shifting`` of
+    ``GET /bottleneck``, normalised to 1; the ``overall`` line at weight 1 when no shares are
+    known), plus quality losses of the output line at weight 1. Starvation and blocking of the
+    other lines follow from the bottleneck and are left out, as is planned downtime.
+
+    Returns a loss-tree-shaped dict (``totals``, ``categories``, ``items``) plus ``lines``
+    (bottleneck lines with their weight, largest first), or ``None`` without a bottleneck.
+    """
+    raw: dict[str, float] = {}
+    for line, s in ((bottleneck or {}).get("shares") or {}).items():
+        w = float(s.get("sole") or 0.0) + float(s.get("shifting") or 0.0)
+        if w > 0:
+            raw[line] = w
+    total = sum(raw.values())
+    overall = (bottleneck or {}).get("overall")
+    if total <= 0 and overall:
+        raw, total = {overall: 1.0}, 1.0
+    if total <= 0:
+        return None
+    weights = {line: w / total for line, w in raw.items()}
+
+    items: list[dict[str, Any]] = []
+    for item in losses.get("items") or []:
+        if not item.get("loss"):
+            continue
+        line = item.get("line") or ""
+        weight = weights.get(line, 0.0)
+        if item.get("category") == QUALITY and output_line and line == output_line:
+            weight = 1.0
+        if weight <= 0:
+            continue
+        items.append(
+            {
+                **item,
+                "weight": weight,
+                "minutes": float(item.get("minutes") or 0.0) * weight,
+                "units": float(item.get("units") or 0.0) * weight,
+                "kzt": float(item.get("kzt") or 0.0) * weight,
+            }
+        )
+    items.sort(key=lambda i: -i["units"])
+    by_cat: dict[str, list[float]] = {}
+    for i in items:
+        acc = by_cat.setdefault(i["category"], [0.0, 0.0, 0.0])
+        acc[0] += i["minutes"]
+        acc[1] += i["units"]
+        acc[2] += i["kzt"]
+    return {
+        **{k: v for k, v in losses.items() if k not in ("items", "categories", "totals")},
+        "totals": {
+            "minutes": round(sum(i["minutes"] for i in items), 2),
+            "units": round(sum(i["units"] for i in items), 2),
+            "kzt": round(sum(i["kzt"] for i in items)),
+        },
+        "categories": [
+            {
+                "category": c,
+                "minutes": round(v[0], 2),
+                "units": round(v[1], 2),
+                "kzt": round(v[2]),
+                "loss": True,
+            }
+            for c, v in by_cat.items()
+        ],
+        "items": items,
+        "lines": [
+            {"line": line, "share": share}
+            for line, share in sorted(weights.items(), key=lambda kv: -kv[1])
+        ],
+    }

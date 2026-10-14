@@ -23,7 +23,9 @@ def configure_logging(service: str, *, level: str = "INFO") -> Any:
         wrapper_class=structlog.make_filtering_bound_logger(
             logging.getLevelNamesMapping()[level.upper()]
         ),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        # No explicit file: structlog then resolves ``sys.stdout`` at write time, so a
+        # stream swapped and closed later (tests, in-process CLI calls) is never cached.
+        logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,
     )
     return structlog.get_logger().bind(service=service)

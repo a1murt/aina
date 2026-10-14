@@ -1,5 +1,6 @@
-"""M7b on real processes: history (backfill + replay) → live sim at 300× with S2 and S3 at
-``demo_start`` → the engine's PdM serving writes ``prediction`` rows, health in ``live:equipment``,
+"""M7b on real processes: history (backfill + replay) → live sim (the stage speed until AL-M1,
+then 300×) with S2 and S3 at ``demo_start`` → the engine's PdM serving writes ``prediction``
+rows, health in ``live:equipment``,
 AL-M1 for ABB-04 (S3) and AL-M2 for BOOTH-02 (S2: "заменить в пересменку 15:00"); the API serves
 them (health, predictions, work order from the alert).
 
@@ -85,16 +86,36 @@ async def stack(db_url: URL, tmp_path: Path) -> AsyncIterator[Stack]:
 
 
 async def wait_for(
-    stack: Stack, db_url: URL, sql: str, timeout_s: float = 90.0
+    stack: Stack, db_url: URL, sql: str, timeout_s: float = 90.0, **params: Any
 ) -> list[dict[str, Any]]:
     deadline = time.monotonic() + timeout_s
     rows: list[dict[str, Any]] = []
     while time.monotonic() < deadline:
-        rows = await query(db_url, sql)
+        rows = await query(db_url, sql, **params)
         if rows:
             return rows
         await asyncio.sleep(0.5)
     raise TimeoutError(f"no rows for {sql}\n{stack.log('engine')}")
+
+
+async def wait_pdm_quiet(stack: Stack, db_url: URL, timeout_s: float = 30.0) -> None:
+    """After a pause: the engine sees the frozen clock (no new PdM slot falls due) and a tick
+    that was already running has written its rows (``prediction`` stable, engine caught up)."""
+    deadline = time.monotonic() + timeout_s
+    sql = "SELECT count(*) AS n, max(ts) AS t FROM prediction"
+    while (await stack.stats("engine"))["clock_speed"] != 0:
+        if time.monotonic() > deadline:
+            raise TimeoutError("the engine did not see the pause")
+        await asyncio.sleep(0.25)
+    before = await query(db_url, sql)
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1.0)
+        await stack.caught_up(timeout_s=max(deadline - time.monotonic(), 1.0))
+        now = await query(db_url, sql)
+        if now == before:
+            return
+        before = now
+    raise TimeoutError(f"prediction rows kept changing after the pause: {before}")
 
 
 async def test_s3_and_s2_through_the_engine_and_the_api(
@@ -102,25 +123,36 @@ async def test_s3_and_s2_through_the_engine_and_the_api(
 ) -> None:
     demo_start = cfg.simulation.clock.demo_start
     await stack.start()
-    await stack.run_plant(300.0)
-    # S2 → AL-M2 for BOOTH-02, S3 → AL-M1 for ABB-04
+    # DEMO-5 is a stage requirement, so its first quarter hour runs at the stage speed: at 300x
+    # the 15 plant minutes are 3 real seconds, and the engine's first PdM tick (a cold read of
+    # 24 h of telemetry) alone can take that long on a loaded host
+    await stack.run_plant(cfg.simulation.clock.speed)
+    # S3 → AL-M1 for ABB-04, S2 → AL-M2 for BOOTH-02
+    m1 = await wait_for(
+        stack,
+        db_url,
+        "SELECT ts, message_ru, value, severity FROM alert "
+        "WHERE rule_id = 'AL-M1' AND entity = 'ABB-04' ORDER BY ts",
+    )
+    # DEMO-5: on stage the AL-M1 of ABB-04 must be there by 07:15 plant time
+    assert m1[0]["ts"] <= demo_start + timedelta(minutes=15), m1[0]
+    await stack.sim("POST", "/speed", {"value": 300.0})
     m2 = await wait_for(
         stack,
         db_url,
         "SELECT message_ru, value, severity, status FROM alert WHERE rule_id = 'AL-M2' "
         "AND entity = 'BOOTH-02' AND status <> 'resolved'",
     )
-    m1 = await wait_for(
+    # a few more ticks: wait for them, not for a fixed time
+    await wait_for(
         stack,
         db_url,
-        "SELECT ts, message_ru, value, severity FROM alert "
-        "WHERE rule_id = 'AL-M1' AND entity = 'ABB-04'",
+        "SELECT count(*) AS n FROM prediction WHERE equipment = 'ABB-04' AND ts >= :t "
+        "HAVING count(*) >= 3",
+        t=demo_start,
     )
-    # DEMO-5: on stage the AL-M1 of ABB-04 must be there by 07:15 plant time
-    assert m1[0]["ts"] <= demo_start + timedelta(minutes=15), m1[0]
-    await asyncio.sleep(3.0)  # a few more ticks
     await stack.sim("POST", "/pause")
-    await asyncio.sleep(1.5)
+    await wait_pdm_quiet(stack, db_url)
     preds = await query(
         db_url,
         "SELECT equipment, ts, p_failure, health_index, model_version, top_factors FROM prediction "
@@ -277,7 +309,8 @@ async def test_s3_and_s2_through_the_engine_and_the_api(
         ask_body = r.json()
         assert ask_body["mode"] == "offline"
         assert ask_body["tool_calls"][0]["name"] == "get_equipment_health"
-        assert "вероятность отказа в ближайшие 8 ч" in ask_body["answer"]
+        assert "риск отказа" in ask_body["answer"]
+        assert "в ближайшие 8 ч" in ask_body["answer"]
         assert "ABB-04" in ask_body["basis"]["entities"]
         r = client.post(
             "/api/v1/copilot/ask",

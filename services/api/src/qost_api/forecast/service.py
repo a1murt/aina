@@ -9,9 +9,12 @@ so the event loop stays responsive. Caches (per process):
 * baseline paths by (month, calibration, state digest, seed, runs) — a what-if request then
   computes only the scenario;
 * levers by (epoch, month, seed, runs, calibration, plant minute) — a request in the same plant
-  minute (a paused plant) is answered from the cache; a later one gets the newest result of the
-  last :data:`LEVERS_MAX_AGE` of plant time at once while one refresh runs in the background; a
-  new calibration starts a new series; a state change within one plant minute (an inject while
+  minute (a paused plant) is answered from the cache; while the plant runs, a later one gets the
+  newest result of the last :data:`LEVERS_MAX_AGE` of plant time at once while one refresh runs
+  in the background (the director polls, so the next poll gets the refresh); while it is paused
+  the director does not poll, so the request awaits the result of the paused minute instead
+  (shared with the pause warm-up when that is already running); a new calibration starts a new
+  series; a state change within one plant minute (an inject while
   paused) shows with the next plant minute or warm-up (see PROGRESS «Решения»);
 * effect by (epoch, month, calibration, seed, runs, scenario, assumptions).
 
@@ -376,12 +379,17 @@ class ForecastService:
             if cached is not None:
                 return cached
             recent = self._recent_levers(series, minute)
-            if recent is not None:
+            if recent is not None and not self._paused():
                 self._refresh_later(key, chosen, runs, seed, principal)
                 return recent
         return await self._shared(
             key, lambda: self._compute_levers(key, chosen, runs, seed, principal)
         )
+
+    def _paused(self) -> bool:
+        """True while the simulator clock is paused (a clock without a state never pauses)."""
+        state: Any = getattr(self.clock, "state", None)
+        return bool(getattr(state, "paused", False))
 
     def _recent_levers(self, series: tuple[Any, ...], minute: datetime) -> LeversResult | None:
         """Newest cached result of the series within ``LEVERS_MAX_AGE`` of plant time."""

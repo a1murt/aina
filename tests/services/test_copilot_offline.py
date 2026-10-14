@@ -21,6 +21,7 @@ from qost_api.copilot.offline import (
     target_quantities,
 )
 from qost_api.copilot.tools import Toolbox
+from qost_api.queries.losses import bottleneck_loss_view
 from twin_core.config import TwinConfig, load_config
 
 TODAY = date(2026, 10, 16)
@@ -164,6 +165,35 @@ LOSSES = {
         {"category": "microstops", "minutes": 0.3, "units": 0.1, "kzt": 50000, "loss": True},
     ],
 }
+
+
+def _item(category: str, line: str, minutes: float, units: float, kzt: float) -> dict[str, Any]:
+    loss = category != "planned_downtime"
+    return {
+        "category": category,
+        "line": line,
+        "minutes": minutes,
+        "units": units,
+        "kzt": kzt,
+        "loss": loss,
+    }
+
+
+# Plant tree items: each stop/speed category on both bottleneck lines (weights 0.68 + 0.32 add
+# up to the category of LOSSES), quality on the output line (weight 1), plus items that the
+# bottleneck view leaves out: starvation of a non-bottleneck line and planned downtime.
+PLANT_ITEMS: list[dict[str, Any]] = [
+    *(
+        _item(c["category"], line, c["minutes"], c["units"], c["kzt"])
+        for c in LOSSES["categories"]  # type: ignore[attr-defined]
+        if c["loss"] and c["category"] != "quality"
+        for line in ("PAINT-1", "WELD-1")
+    ),
+    _item("quality", "QC-1", 444.0, 114.0, 79800000),
+    _item("quality", "ASSY-1", 50.0, 13.0, 9100000),
+    _item("starved", "ASSY-1", 300.0, 80.0, 56000000),
+    _item("planned_downtime", "PAINT-1", 60.0, 15.0, 0),
+]
 STOPS: list[dict[str, Any]] = [
     {
         "entity": "CONV-03",
@@ -421,7 +451,8 @@ def ran(monkeypatch: pytest.MonkeyPatch, cfg: TwinConfig) -> list[tuple[str, dic
             if name == "get_kpi":
                 return _kpi(cfg, a)
             if name == "get_losses":
-                return {**LOSSES, "level": a.get("level"), "code": a.get("code")}
+                items = PLANT_ITEMS if a.get("level") == "plant" else []
+                return {**LOSSES, "items": items, "level": a.get("level"), "code": a.get("code")}
             if name == "get_downtime":
                 items = [s for s in STOPS if s["open"]] if a.get("open_only") else STOPS
                 return {"items": items, "count_shown": len(items), "more": False}
@@ -623,11 +654,9 @@ async def test_plan_answer_names_the_ceiling_and_the_bottleneck(
     assert "цель завода 5 500 — вероятность 0 %" in res.text
     assert "потолка линии ≈ 5 191 авто" in res.text
     assert "узкое место — Окраска-1 (68 % смен)" in res.text
-    # plant losses are the losses of the bottleneck line, not the sum over all lines
-    assert (
-        "get_losses",
-        {"from": "2026-10-01", "to": "2026-10-16", "level": "line", "code": "PAINT-1"},
-    ) in ran
+    # plant losses are the losses at the bottleneck (the director tile's figure), from the
+    # plant tree weighted by the bottleneck shares, not the sum over all lines
+    assert ("get_losses", {"from": "2026-10-01", "to": "2026-10-16", "level": "plant"}) in ran
 
 
 async def test_advice_uses_the_levers(
@@ -723,3 +752,44 @@ def test_entities_by_short_names_and_numbers(cfg: TwinConfig) -> None:
     assert find_entities(cfg, "брак на ОТК").areas == ["QC"]
     e = find_entities(cfg, "Сравни окраску со сваркой")
     assert e.ordered == [("area", "PAINT"), ("area", "WELD")]
+
+
+def test_bottleneck_loss_view_matches_the_director_tile() -> None:
+    """Same definition as web/src/components/director/losses.ts (bottleneckLosses)."""
+    view = bottleneck_loss_view({"items": PLANT_ITEMS}, BOTTLENECK, "QC-1")
+    assert view is not None
+    assert [(x["line"], round(x["share"], 4)) for x in view["lines"]] == [
+        ("PAINT-1", 0.6818),
+        ("WELD-1", 0.3182),
+    ]
+    weights = {(i["category"], i["line"]): round(i["weight"], 4) for i in view["items"]}
+    assert weights[("speed", "PAINT-1")] == 0.6818
+    assert weights[("quality", "QC-1")] == 1.0  # quality of the output line in full
+    # non-bottleneck lines and planned downtime are left out
+    assert all(i["line"] in ("PAINT-1", "WELD-1", "QC-1") and i["loss"] for i in view["items"])
+    cats = {c["category"]: c["units"] for c in view["categories"]}
+    assert cats == {
+        "quality": 114.0,
+        "speed": 96.0,
+        "unplanned_downtime": 94.0,
+        "starved": 0.2,
+        "microstops": 0.1,
+    }
+    assert view["totals"] == {"minutes": 1180.3, "units": 304.3, "kzt": 212990000}
+    # no shares known: the overall line at weight 1; no bottleneck at all: no view
+    only = bottleneck_loss_view({"items": PLANT_ITEMS}, {"overall": "WELD-1"}, "QC-1")
+    assert only is not None
+    assert only["lines"] == [{"line": "WELD-1", "share": 1.0}]
+    assert bottleneck_loss_view({"items": PLANT_ITEMS}, {"shares": {}}, "QC-1") is None
+
+
+async def test_losses_answer_is_the_tile_figure_and_names_the_weights(
+    cfg: TwinConfig, ran: list[tuple[str, dict[str, Any]]]
+) -> None:
+    res = await OfflineCopilot(cfg).answer("Сколько потеряли с начала месяца?", toolbox(cfg), TODAY)
+    text = res.text.replace("\xa0", " ")
+    assert text.startswith("Потери на узком месте (с начала месяца): ≈ 304 авто, ≈ 213 млн ₸")
+    assert "по доле смен, когда линия была узким местом (Окраска-1 — 68 %, Сварка-1 — 32 %)" in (
+        text
+    )
+    assert ("get_losses", {"from": "2026-10-01", "to": "2026-10-16", "level": "plant"}) in ran
