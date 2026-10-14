@@ -6,8 +6,12 @@ Persistence in TimescaleDB is tested in tests/integration/test_forecast_api.py.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import time
 from collections.abc import Iterator
+from datetime import timedelta
+from typing import Any, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +19,8 @@ from fastapi.testclient import TestClient
 from api_support import bearer
 from forecast_support import MemoryBackend, demo_history, memory_backend
 from qost_api.app import create_app
+from qost_api.auth import Principal
+from qost_api.forecast.service import EffectRequest, ForecastService
 from twin_core.clock import ManualClock
 from twin_core.config import TwinConfig
 
@@ -194,3 +200,113 @@ def test_effect_endpoint(client: TestClient) -> None:
     )
     assert bad.status_code == 422
     assert client.post("/api/v1/effect", json={}, headers=bearer("quality")).status_code == 403
+
+
+# --------------------------------------------------------------------------- caching (S6)
+
+
+def _counting(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:
+    """Count calls of the forecast service's ``levers`` / ``run_effect``."""
+    import qost_api.forecast.service as module
+
+    calls: list[int] = []
+    real = getattr(module, name)
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, counted)
+    return calls
+
+
+async def test_concurrent_levers_compute_once_and_minutes_are_cached(
+    cfg: TwinConfig, backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    computed = _counting(monkeypatch, "levers")
+    clock = ManualClock(cfg.simulation.clock.demo_start)
+    service = ForecastService(cfg, clock, backend)
+    who = Principal("director", "director", 1)
+    six = await asyncio.gather(*(service.levers(None, who, n_runs=100) for _ in range(6)))
+    assert len(computed) == 1, "six windows opened together cost one computation"
+    assert all(r == six[0] for r in six)
+    started = time.perf_counter()
+    again = await service.levers(None, who, n_runs=100)
+    assert time.perf_counter() - started < 0.3
+    assert again == six[0]
+    assert len(computed) == 1
+
+    # two plant minutes later: the recent result at once, one refresh in the background
+    clock.advance(timedelta(minutes=2))
+    stale = await service.levers(None, who, n_runs=100)
+    assert stale == six[0]
+    await asyncio.gather(*service._refresh.values())
+    assert len(computed) == 2
+
+    # a reset (plant time goes back): new epoch, nothing old is served
+    clock.set(clock.now() - timedelta(hours=1))
+    await service.levers(None, who, n_runs=100)
+    assert service.epoch == 1
+    assert len(computed) == 3
+
+
+async def test_effect_is_cached_and_warm_fills_the_director_caches(
+    cfg: TwinConfig, backend: MemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    levers_calls = _counting(monkeypatch, "levers")
+    effect_calls = _counting(monkeypatch, "run_effect")
+    service = ForecastService(cfg, ManualClock(cfg.simulation.clock.demo_start), backend)
+    who = Principal("system", "admin", None)
+    durations = await service.warm(who)
+    assert set(durations) == {"levers_ms", "effect_ms"}
+    assert (len(levers_calls), len(effect_calls)) == (1, 1)
+    director = Principal("director", "director", 1)
+    await service.levers(None, director)
+    await service.effect(EffectRequest(), director)
+    await service.effect(EffectRequest(), director)
+    assert (len(levers_calls), len(effect_calls)) == (1, 1)
+    other = await service.effect(EffectRequest(assumptions={"margin_rate": 0.08}), director)
+    assert len(effect_calls) == 2
+    assert other.month
+
+
+async def test_warm_loop_on_start_pause_and_reset() -> None:
+    from types import SimpleNamespace
+
+    from qost_api.forecast.warm import warm_loop
+
+    class Stub:
+        epoch = 0
+
+        def __init__(self) -> None:
+            self.warmed = 0
+            self.reset_next = False
+
+        def observe(self, now: Any) -> bool:
+            reset, self.reset_next = self.reset_next, False
+            return reset
+
+        async def warm(self, principal: Principal) -> dict[str, int]:
+            self.warmed += 1
+            return {"levers_ms": 1, "effect_ms": 1}
+
+    stub = Stub()
+    clock = SimpleNamespace(now=lambda: None, state=SimpleNamespace(paused=False))
+    task = asyncio.create_task(
+        warm_loop(cast(Any, stub), cast(Any, clock), settle_s=0.0, poll_s=0.01)
+    )
+    try:
+        await asyncio.sleep(0.05)
+        assert stub.warmed == 1  # on start
+        clock.state.paused = True
+        await asyncio.sleep(0.05)
+        assert stub.warmed == 2  # on pause
+        await asyncio.sleep(0.05)
+        assert stub.warmed == 2  # once per pause
+        stub.reset_next = True
+        await asyncio.sleep(0.05)
+        assert stub.warmed == 3  # after a reset
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

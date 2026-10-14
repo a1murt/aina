@@ -8,15 +8,26 @@ so the event loop stays responsive. Caches (per process):
   day, and the database holds at most one snapshot per key;
 * baseline paths by (month, calibration, state digest, seed, runs) — a what-if request then
   computes only the scenario;
-* levers by (month, calibration, state digest, seed, runs, plant hour).
+* levers by (epoch, month, seed, runs, plant minute) — a request in the same plant minute (a
+  paused plant) is answered from the cache; a later one gets the newest result of the last
+  :data:`LEVERS_MAX_AGE` of plant time at once while one refresh runs in the background;
+* effect by (epoch, month, calibration, seed, runs, scenario, assumptions).
+
+Concurrent identical requests share one computation (six director windows opened together cost
+one run). The epoch counts demo resets: plant time going back more than :data:`RESET_BACKSTEP`
+drops every cached result. :meth:`ForecastService.warm` pre-computes the director's levers and
+effect (the API warms them when the plant is paused and after a reset).
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 import anyio
@@ -39,13 +50,18 @@ from twin_core.forecast.effect import EffectResult
 from twin_core.forecast.levers import LeversResult
 from twin_core.forecast.model import Paths
 from twin_core.forecast.overrides import OverrideIssue, Overrides, check_overrides
-from twin_core.forecast.params import CalibrationParams, PlantState
+from twin_core.forecast.params import CalibrationParams, PlantState, Targets
 from twin_core.forecast.result import ForecastResult
 from twin_core.forecast.runner import ForecastContext, default_seed, forecast, levers
 from twin_core.forecast.runner import effect as run_effect
 
 _BASE_CACHE = 16
 _LEVERS_CACHE = 8
+_EFFECT_CACHE = 16
+LEVERS_MAX_AGE = timedelta(minutes=30)
+"""Plant time a cached levers result may lag behind while a refresh runs (caching policy)."""
+RESET_BACKSTEP = timedelta(minutes=5)
+"""Plant time going back by more than this is a reset (the web uses the same rule)."""
 
 
 class ForecastRequest(BaseModel):
@@ -134,8 +150,48 @@ class ForecastService:
         self._snapshots: dict[tuple[str, int, str], StoredSnapshot] = {}
         self._base: OrderedDict[tuple[Any, ...], Paths] = OrderedDict()
         self._levers: OrderedDict[tuple[Any, ...], LeversResult] = OrderedDict()
+        self._effects: OrderedDict[tuple[Any, ...], EffectResult] = OrderedDict()
+        self._inflight: dict[tuple[Any, ...], asyncio.Future[Any]] = {}
+        self._refresh: dict[tuple[Any, ...], asyncio.Task[Any]] = {}
+        self._high_water: datetime | None = None
+        self.epoch = 0
+        """Resets seen by this process (part of every cache key)."""
 
     # ------------------------------------------------------------------ helpers
+
+    def observe(self, now: datetime) -> bool:
+        """Track plant time; a jump back (demo reset) drops every cache. True on a reset."""
+        now = ensure_utc(now)
+        reset = self._high_water is not None and now < self._high_water - RESET_BACKSTEP
+        if reset:
+            self.epoch += 1
+            self._levers.clear()
+            self._effects.clear()
+            self._base.clear()
+            self._snapshots = {}
+            self._high_water = now
+        elif self._high_water is None or now > self._high_water:
+            self._high_water = now
+        return reset
+
+    async def _shared[T](self, key: tuple[Any, ...], make: Callable[[], Awaitable[T]]) -> T:
+        """One computation per key at a time: concurrent callers await the same result."""
+        running = self._inflight.get(key)
+        if running is not None:
+            result: T = await asyncio.shield(running)
+            return result
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._inflight[key] = future
+        try:
+            value = await make()
+        except BaseException as exc:
+            future.set_exception(exc)
+            future.exception()  # retrieved: no "never retrieved" warning without waiters
+            raise
+        finally:
+            self._inflight.pop(key, None)
+        future.set_result(value)
+        return value
 
     def _runs(self, requested: int | None, *, levers: bool = False) -> int:
         counts = self.cfg.simulation.forecast.n_runs
@@ -293,19 +349,67 @@ class ForecastService:
         return _view(stored.id, rec, result)
 
     async def levers(
-        self, month: str | None, principal: Principal, *, n_runs: int | None = None
+        self,
+        month: str | None,
+        principal: Principal,
+        *,
+        n_runs: int | None = None,
+        fresh: bool = False,
     ) -> LeversResult:
+        """Levers of the month; cached per plant minute (see the module docstring).
+
+        ``fresh`` computes even when a result of the same plant minute is cached (warming).
+        """
         now = self.clock.now()
+        self.observe(now)
         chosen = self._month(month, now)
         runs = self._runs(n_runs, levers=True)
         seed = default_seed(self.cfg)
-        prepared = await self._prepare(chosen, principal)
+        series = ("levers", self.epoch, chosen, seed, runs)
+        minute = ensure_utc(now).replace(second=0, microsecond=0)
+        key = (*series, minute.isoformat())
+        if not fresh:
+            cached = self._levers.get(key)
+            if cached is not None:
+                return cached
+            recent = self._recent_levers(series, minute)
+            if recent is not None:
+                self._refresh_later(key, chosen, runs, seed, principal)
+                return recent
+        return await self._shared(
+            key, lambda: self._compute_levers(key, chosen, runs, seed, principal)
+        )
+
+    def _recent_levers(self, series: tuple[Any, ...], minute: datetime) -> LeversResult | None:
+        """Newest cached result of the series within ``LEVERS_MAX_AGE`` of plant time."""
+        best: LeversResult | None = None
+        for key, value in self._levers.items():
+            if key[: len(series)] != series:
+                continue
+            at = datetime.fromisoformat(key[-1])
+            if minute - LEVERS_MAX_AGE <= at <= minute and (
+                best is None or value.as_of > best.as_of
+            ):
+                best = value
+        return best
+
+    def _refresh_later(
+        self, key: tuple[Any, ...], month: str, runs: int, seed: int, principal: Principal
+    ) -> None:
+        if key in self._inflight or any(not t.done() for t in self._refresh.values()):
+            return
+        task = asyncio.create_task(
+            self._shared(key, lambda: self._compute_levers(key, month, runs, seed, principal)),
+            name="levers-refresh",
+        )
+        self._refresh = {key: task}
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+
+    async def _compute_levers(
+        self, key: tuple[Any, ...], month: str, runs: int, seed: int, principal: Principal
+    ) -> LeversResult:
+        prepared = await self._prepare(month, principal)
         ctx = prepared.ctx
-        hour = ensure_utc(now).replace(minute=0, second=0, microsecond=0).isoformat()
-        key = (chosen, prepared.calibration.id, ctx.state.digest(), seed, runs, hour)
-        cached = self._levers.get(key)
-        if cached is not None:
-            return cached
 
         def work() -> LeversResult:
             started = time.perf_counter()
@@ -315,16 +419,52 @@ class ForecastService:
             )
 
         result = await to_thread.run_sync(work, limiter=self._limiter)
-        self._remember(self._levers, key, result, _LEVERS_CACHE)
+        if key[1] == self.epoch:  # not computed across a reset
+            self._remember(self._levers, key, result, _LEVERS_CACHE)
         return result
 
     async def effect(self, request: EffectRequest, principal: Principal) -> EffectResult:
         now = self.clock.now()
+        self.observe(now)
         month = self._month(request.month, now, allow_past=True)
         n_runs = self._runs(request.n_runs)
         seed = request.seed if request.seed is not None else default_seed(self.cfg)
         snapshot = await self.calibration(principal)
         targets = await self.backend.targets(self.cfg, month)
+        key = (
+            "effect",
+            self.epoch,
+            month,
+            snapshot.id,
+            json.dumps(targets.as_dict(), sort_keys=True),
+            seed,
+            n_runs,
+            json.dumps(
+                request.scenario.normalized() if request.scenario is not None else None,
+                sort_keys=True,
+                default=str,
+            ),
+            json.dumps(request.assumptions, sort_keys=True, default=str),
+        )
+        cached = self._effects.get(key)
+        if cached is not None:
+            return cached
+        result = await self._shared(
+            key, lambda: self._compute_effect(request, month, n_runs, seed, snapshot, targets)
+        )
+        if key[1] == self.epoch:
+            self._remember(self._effects, key, result, _EFFECT_CACHE)
+        return result
+
+    async def _compute_effect(
+        self,
+        request: EffectRequest,
+        month: str,
+        n_runs: int,
+        seed: int,
+        snapshot: StoredSnapshot,
+        targets: Targets,
+    ) -> EffectResult:
         m0, m1 = month_bounds(self.cfg, month)
         if request.scenario is not None:
             issues = check_overrides(
@@ -367,6 +507,18 @@ class ForecastService:
             )
 
         return await to_thread.run_sync(work, limiter=self._limiter)
+
+    async def warm(self, principal: Principal) -> dict[str, int]:
+        """Compute the director's levers and default effect now (pause, reset); errors are
+        logged by the caller. Returns the durations in ms."""
+        out: dict[str, int] = {}
+        started = time.perf_counter()
+        await self.levers(None, principal, fresh=True)
+        out["levers_ms"] = round((time.perf_counter() - started) * 1000)
+        started = time.perf_counter()
+        await self.effect(EffectRequest(), principal)
+        out["effect_ms"] = round((time.perf_counter() - started) * 1000)
+        return out
 
     @staticmethod
     def _remember[K, V](cache: OrderedDict[K, V], key: K, value: V, size: int) -> None:

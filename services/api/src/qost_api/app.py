@@ -23,6 +23,7 @@ from qost_api import __version__
 from qost_api.db import make_engine, make_sessionmaker
 from qost_api.forecast.data import DbForecastBackend, ForecastBackend
 from qost_api.forecast.service import ForecastService
+from qost_api.forecast.warm import warm_loop
 from qost_api.live.hub import LiveHub, LiveSource, RedisLiveSource
 from qost_api.openapi import OPENAPI_URL, install_docs, install_openapi
 from qost_api.problems import install_problem_handlers
@@ -133,9 +134,27 @@ def create_app(
                 if sync_reference_on_start and app.state.sessionmaker is not None
                 else None
             )
+            warm_task = (
+                asyncio.create_task(
+                    warm_loop(
+                        app.state.forecast_service,
+                        app.state.clock,
+                        settle_s=settings.forecast_warm_settle_s,
+                    ),
+                    name="forecast-warm",
+                )
+                if settings.forecast_warm
+                and app.state.forecast_service is not None
+                and isinstance(app.state.clock, SimClock)
+                else None
+            )
             try:
                 yield
             finally:
+                if warm_task is not None:
+                    warm_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await warm_task
                 if sync_task is not None:
                     sync_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
