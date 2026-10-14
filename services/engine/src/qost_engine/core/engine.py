@@ -1640,7 +1640,10 @@ class EngineCore:
             elif stop.alert is not None and stop.alert in self.st.alerts:
                 shown = self.st.alerts[stop.alert].value
                 elapsed = stop.duration(t) / 60.0
-                if isinstance(shown, dict) and elapsed - float(shown.get("elapsed_min", 0)) >= 5.0:
+                shown_min = float(shown.get("elapsed_min", 0)) if isinstance(shown, dict) else None
+                if shown_min is not None and (
+                    elapsed - shown_min >= self.params.alert_impact_refresh_min
+                ):
                     self._update_s1(stop, t)  # FR-ENG-06: the impact grows with the stop
             if (
                 not stop.flagged

@@ -10,6 +10,7 @@ from typing import Any
 
 from twin_core.clock import to_plant_tz
 from twin_core.config import TwinConfig
+from twin_core.kpi import minutes_to_units
 from twin_core.rules import (
     AL_ANDON,
     AL_BUFFER,
@@ -64,11 +65,34 @@ def alert_title_ru(alert: Alert, cfg: TwinConfig) -> str:
     return rule.name_ru if rule is not None else alert.rule_id
 
 
-def impact_text(impact: dict[str, Any]) -> str:
-    """FR-ENG-06 wording of :func:`twin_core.kpi.stop_impact` (as stored in the alert value)."""
+def open_stop_rate(cfg: TwinConfig, value: dict[str, Any]) -> float | None:
+    """Cars per minute of an AL-S1 stop that is still open (``ended`` is None), else ``None``.
+
+    Uses :func:`twin_core.kpi.minutes_to_units` for one minute on the stop's line (no new
+    formula): the impact of a just-opened stop is 0 and grows with the stop (VIS-1).
+    """
+    if value.get("ended") is not None or value.get("microstop"):
+        return None
+    line = cfg.lines.get(str(value.get("line")))
+    if line is None:
+        return None
+    return minutes_to_units(1.0, float(line.ict_seconds))
+
+
+def rate_text(per_min: float) -> str:
+    """``оценка: ≈ 0,26 авто за каждую минуту простоя``."""
+    return f"оценка: ≈ {num(per_min, 2)} авто за каждую минуту простоя"
+
+
+def impact_text(impact: dict[str, Any], *, per_min: float | None = None) -> str:
+    """FR-ENG-06 wording of :func:`twin_core.kpi.stop_impact` (as stored in the alert value).
+
+    ``per_min``: cars per minute of an open stop (:func:`open_stop_rate`); shown instead of
+    "no impact" while the loss is still 0.
+    """
     lost = float(impact.get("lost_units") or 0.0)
     if lost <= 0:
-        return "влияния на выпуск нет"
+        return rate_text(per_min) if per_min else "влияния на выпуск нет"
     head = f"потеря ≈ {num(lost, 1)} авто"
     if impact.get("bottleneck"):
         return f"{head}, безвозвратно (узкое место)"
@@ -112,7 +136,9 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
         if value.get("microstop"):
             return text + " — микроостановка, закрыто автоматически"
         impact = value.get("impact")
-        return text + (f"; {impact_text(impact)}" if isinstance(impact, dict) else "")
+        if not isinstance(impact, dict):
+            return text
+        return f"{text}; {impact_text(impact, per_min=open_stop_rate(cfg, value))}"
     if alert.rule_id == AL_BUFFER and isinstance(value, dict):
         buffer = cfg.buffers[alert.entity]
         level, capacity = value.get("level"), value.get("capacity")
@@ -235,6 +261,8 @@ __all__ = [
     "limit_text_ru",
     "local_time",
     "num",
+    "open_stop_rate",
     "pct",
     "pdm_text_ru",
+    "rate_text",
 ]

@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from qost_notifier import texts
-from twin_core.alert_text import num
+from twin_core.alert_text import num, open_stop_rate, rate_text
 from twin_core.clock import to_plant_tz
 from twin_core.config import TwinConfig
 from twin_core.report import entity_name
@@ -57,11 +57,12 @@ def _n1(value: float) -> str:
     return num(round(value, 1))
 
 
-def impact_short(impact: dict[str, Any]) -> str:
-    """FR-ENG-06 impact in the §14 wording, from the alert value ``impact``."""
+def impact_short(impact: dict[str, Any], *, per_min: float | None = None) -> str:
+    """FR-ENG-06 impact in the §14 wording, from the alert value ``impact``; ``per_min`` (cars
+    per minute of a still-open stop) replaces "no impact" while the loss is 0 (VIS-1)."""
     lost = float(impact.get("lost_units") or 0.0)
     if lost <= 0:
-        return "влияние на выпуск: нет"
+        return rate_text(per_min) if per_min else "влияние на выпуск: нет"
     head = f"влияние: −{_n1(lost)} авто"
     if impact.get("bottleneck"):
         return f"{head}, безвозвратно (узкое место)"
@@ -101,7 +102,8 @@ def headline(cfg: TwinConfig, alert: AlertInfo, *, tag: bool = True) -> str:
         parts.append(entity_name(cfg, line))
     impact = value.get("impact")
     if isinstance(impact, dict):
-        parts.append(impact_short(impact))
+        per_min = open_stop_rate(cfg, value) if alert.rule_id == AL_EQUIPMENT_STOP else None
+        parts.append(impact_short(impact, per_min=per_min))
     return " · ".join(parts)
 
 

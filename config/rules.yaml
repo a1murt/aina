@@ -122,6 +122,7 @@ engine:
   bottleneck_rate_shifts: 5      # FR-ENG-06: темп узкого места = средний выпуск за 5 закрытых смен
   live_oee_min_elapsed_min: 120  # AL-O1/O2 по текущей смене — только после 2 ч (прогноз)
   s1_resolve_microstops: true    # AL-S1 класса A — сразу; закрыть, если остановка оказалась микроостановкой
+  alert_impact_refresh_min: 1    # FR-ENG-06: влияние открытой остановки (AL-S1) пересчитывается каждую заводскую минуту
   dq_live_lost: downtime         # DQ-02 live: журнал vs PDOT+ADOT (downtime) | PBT−APT (literal)
   flow_wip_tolerance: 2          # DQ-04 live: допуск — кузов у заблокированной линии + кузов в работе
 

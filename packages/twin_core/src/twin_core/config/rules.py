@@ -111,6 +111,8 @@ class EngineParams(StrictModel):
     """Live E and OEE are published as ``null`` while the running shift has less APT than this:
     a body started before the shift boundary makes E > 1 on a tiny APT (display only; stored
     ``kpi_shift`` rows keep full values)."""
+    alert_impact_refresh_min: PositiveFloat = 5.0
+    """FR-ENG-06: the AL-S1 impact of an open stop is recomputed every N plant minutes."""
     s1_resolve_microstops: bool = True
     """AL-S1 for class A fires at once; resolve it if the stop ends as a microstop."""
     dq_live_lost: Literal["downtime", "literal"] = "downtime"

@@ -4,6 +4,7 @@ DB sink row building, engine parameters in rules.yaml."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -127,6 +128,31 @@ def test_alert_texts(cfg: TwinConfig) -> None:
     assert "безвозвратно" in impact_text({**impact, "bottleneck": True})
     assert "не отыгрывается" in impact_text({**impact, "recover_shifts": None})
     assert "влияния на выпуск нет" in impact_text({"lost_units": 0})
+    assert impact_text({"lost_units": 0}, per_min=60 / 233) == (
+        "оценка: ≈ 0,26 авто за каждую минуту простоя"
+    )
+    # VIS-1: a just-opened stop (0 min, loss 0) shows the per-minute estimate, not "no impact"
+    opened = ev.equipment_stop(
+        equipment="CONV-03",
+        criticality="A",
+        period_date=DAY,
+        started_key="2026-10-16T02:46:00Z",
+        elapsed_s=0,
+        value={
+            "elapsed_min": 0,
+            "ended": None,
+            "line": "ASSY-1",
+            "reason_code": "ME-CHAIN",
+            "impact": {"lost_units": 0.0, "recover_shifts": None},
+        },
+    )
+    assert opened is not None
+    text = alert_message_ru(opened, cfg)
+    assert "влияния" not in text
+    assert text.endswith("0 мин; оценка: ≈ 0,26 авто за каждую минуту простоя")
+    assert isinstance(opened.value, dict)
+    closed = replace(opened, value={**opened.value, "ended": "2026-10-16T02:47:00Z"})
+    assert alert_message_ru(closed, cfg).endswith("влияния на выпуск нет")
     micro = ev.equipment_stop(
         equipment="CONV-01",
         criticality="A",

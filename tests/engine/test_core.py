@@ -396,3 +396,21 @@ def test_escalation_upgrade_from_warning_level0_takes_earlier_due(cfg: TwinConfi
     core.advance_to(t0 + timedelta(minutes=16))
     escalated = of_type(core.drain()[0], AlertEscalate)
     assert [(e.level, e.roles) for e in escalated] == [(1, ("maintenance",))]
+
+
+def test_s1_open_stop_text_and_impact_refresh_every_plant_minute(cfg: TwinConfig) -> None:
+    """VIS-1/DEMO-2: AL-S1 at 0 min shows the per-minute estimate; refreshed every minute."""
+    assert cfg.rules.engine.alert_impact_refresh_min == 1
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    effects = run(core, [state("CONV-03", "DOWN_UNPLANNED", at(10), alarm_code="ME-CHAIN")])
+    s1 = [a for a in of_type(effects, AlertUpsert) if a.rule_id == "AL-S1"]
+    assert "влияни" not in s1[-1].message_ru
+    assert s1[-1].message_ru.endswith("оценка: ≈ 0,26 авто за каждую минуту простоя")
+    core.advance_to(at(11))
+    s1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-S1"]
+    assert s1[-1].value["elapsed_min"] == pytest.approx(1.0)
+    assert "потеря ≈ 0,3 авто" in s1[-1].message_ru
+    core.advance_to(at(65))
+    s1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-S1"]
+    assert "потеря ≈ 14,2 авто" in s1[-1].message_ru
