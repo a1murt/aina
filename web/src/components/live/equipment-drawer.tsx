@@ -272,7 +272,7 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
                 <span className="min-w-0 flex-1 truncate">
                   {d.reason_code ? plant.name(plant.reasons[d.reason_code], d.reason_code) : t("unclassified")}
                 </span>
-                <span className="tabular-nums">{d.open ? t("open") : plant.fmt.clock((d.duration_s ?? 0) / 60)}</span>
+                <span className="tabular-nums">{d.open ? t("open") : plant.fmt.duration((d.duration_s ?? 0) / 60)}</span>
               </li>
             ))}
           </ul>
