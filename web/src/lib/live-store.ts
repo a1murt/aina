@@ -15,6 +15,7 @@ import type {
   Snapshot,
   UnitEvent,
 } from "@/lib/api/types";
+import { noteAlert, type LiveAlert } from "@/lib/live-alerts";
 
 /**
  * Live plant state fed by WS /ws/live (SPEC §12.3): the first message is a snapshot, then deltas
@@ -55,6 +56,8 @@ export interface LiveState {
   bottleneck: BottleneckLive | null;
   alertsOpen: AlertCounts;
   downtimeOpen: Record<string, DowntimeLive>;
+  /** Latest `alert` message per dedup key (feeds show a new alert before the list re-read). */
+  alerts: Record<string, LiveAlert>;
   /** Incremented on every alert / state message — components refetch lists on change. */
   alertSeq: number;
   stateSeq: number;
@@ -117,6 +120,7 @@ export const useLive = create<LiveState>((set) => ({
   bottleneck: null,
   alertsOpen: { critical: 0, warning: 0, info: 0 },
   downtimeOpen: {},
+  alerts: {},
   alertSeq: 0,
   stateSeq: 0,
   lastMessageAt: 0,
@@ -141,6 +145,7 @@ export const useLive = create<LiveState>((set) => ({
         bottleneck: s.bottleneck,
         alertsOpen: s.alerts_open,
         downtimeOpen: Object.fromEntries((s.downtime_open ?? []).map((d) => [d.entity, d])),
+        alerts: restarted ? {} : prev.alerts,
         alertSeq: prev.alertSeq + 1,
         stateSeq: prev.stateSeq + 1,
         lastMessageAt: performance.now(),
@@ -153,10 +158,12 @@ export const useLive = create<LiveState>((set) => ({
         case "clock": {
           if (data.event === "tick" && typeof data.plant_time === "string") {
             const clock = clockOf(data as unknown as ClockLive);
+            const back = rewound(prev.clock, clock);
             return {
               clock,
               paused: clock?.paused ?? false,
-              epochSeq: rewound(prev.clock, clock) ? prev.epochSeq + 1 : prev.epochSeq,
+              epochSeq: back ? prev.epochSeq + 1 : prev.epochSeq,
+              ...(back ? { alerts: {} } : {}),
               lastMessageAt: now,
             };
           }
@@ -213,8 +220,11 @@ export const useLive = create<LiveState>((set) => ({
         }
         case "bottleneck":
           return { bottleneck: data as unknown as BottleneckLive, lastMessageAt: now };
-        case "alert":
-          return { alertSeq: prev.alertSeq + 1, lastMessageAt: now };
+        case "alert": {
+          const c = prev.clock;
+          const alerts = noteAlert(prev.alerts, data, Date.now(), plantNow(c, now), c && !c.paused ? c.speed : 0);
+          return { ...(alerts ? { alerts } : {}), alertSeq: prev.alertSeq + 1, lastMessageAt: now };
+        }
         case "unit":
           for (const fn of unitListeners) fn(data as unknown as UnitEvent);
           return { lastMessageAt: now };

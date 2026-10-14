@@ -254,6 +254,8 @@ export interface AlertView {
   escalation_level: number;
   recipients: string[];
   can_act: boolean;
+  /** Deduplication key (the same key as in the WS `alert` message). */
+  dedup_key?: string;
 }
 export interface AlertsPage extends Page<AlertView> {
   open_counts: AlertCounts;

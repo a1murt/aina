@@ -11,6 +11,7 @@ import { QueryState } from "@/components/query-state";
 import { SeverityIcon } from "@/components/state-badge";
 import { api } from "@/lib/api/client";
 import type { AlertsPage, AlertView } from "@/lib/api/types";
+import { mergeAlerts, type FeedAlert } from "@/lib/live-alerts";
 import { plantNow, useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
 
@@ -98,6 +99,18 @@ export function useOpenAlerts(limit = 50) {
   });
 }
 
+/**
+ * Open alerts for a feed: the list corrected by the WS messages since it was read — a new alert
+ * shows at once as a pending row (before its commit and the burst re-read), an alert announced
+ * as acknowledged or resolved goes away (see `mergeAlerts`).
+ */
+function useFeedAlerts() {
+  const q = useOpenAlerts();
+  const live = useLive((s) => s.alerts);
+  const items = mergeAlerts(q.data?.items ?? [], q.data ? q.dataUpdatedAt : 0, live);
+  return { q, items };
+}
+
 export function useAckAlert() {
   const qc = useQueryClient();
   return useMutation({
@@ -140,7 +153,7 @@ function usePlantDay(): string | null {
   });
 }
 
-export function AlertRow({ alert, dense = false, today }: { alert: AlertView; dense?: boolean; today?: string | null }) {
+export function AlertRow({ alert, dense = false, today }: { alert: FeedAlert; dense?: boolean; today?: string | null }) {
   const t = useTranslations("alerts");
   const locale = useLocale();
   const plant = usePlant();
@@ -154,7 +167,8 @@ export function AlertRow({ alert, dense = false, today }: { alert: AlertView; de
   return (
     <li
       data-testid="alert-row"
-      data-id={alert.id}
+      data-id={alert.pending ? undefined : alert.id}
+      data-pending={alert.pending ? "1" : undefined}
       data-rule={alert.rule_id}
       data-entity={alert.entity}
       className={cn("flex gap-2.5 border-b px-3 last:border-b-0", dense ? "py-2" : "py-2.5")}
@@ -215,17 +229,19 @@ export function AlertRow({ alert, dense = false, today }: { alert: AlertView; de
 /** Alerts feed (director, live): newest first, critical first within the list. */
 export function AlertsFeed({ limit = 8, className }: { limit?: number; className?: string }) {
   const t = useTranslations("alerts");
-  const q = useOpenAlerts();
+  const { q, items: all } = useFeedAlerts();
   const today = usePlantDay();
   const order = { critical: 0, warning: 1, info: 2 } as const;
-  const items = [...(q.data?.items ?? [])]
-    .sort((a, b) => order[a.severity] - order[b.severity] || b.ts.localeCompare(a.ts))
-    .slice(0, limit);
+  const items = [...all].sort((a, b) => order[a.severity] - order[b.severity] || b.ts.localeCompare(a.ts)).slice(0, limit);
   return (
     <div className={className}>
-      <QueryState loading={q.isLoading} error={q.error} compact className="px-3" />
+      <QueryState loading={q.isLoading && items.length === 0} error={q.error} compact className="px-3" />
       {q.data && items.length === 0 ? <p className="px-3 py-4 text-sm text-muted-foreground">{t("none")}</p> : null}
-      <ul data-testid="alerts-feed">{items.map((a) => <AlertRow key={a.id} alert={a} dense today={today} />)}</ul>
+      <ul data-testid="alerts-feed">
+        {items.map((a) => (
+          <AlertRow key={a.pending ? `live:${a.dedup_key}` : a.id} alert={a} dense today={today} />
+        ))}
+      </ul>
     </div>
   );
 }
@@ -233,9 +249,11 @@ export function AlertsFeed({ limit = 8, className }: { limit?: number; className
 /** Header bell: counts by severity (colour + number) and a drop-down list with «Принять». */
 export function AlertsBell() {
   const t = useTranslations("alerts");
-  const q = useOpenAlerts();
+  const { q, items } = useFeedAlerts();
   const live = useLive((s) => s.alertsOpen);
-  const counts = q.data?.open_counts ?? live;
+  const counts = { ...(q.data?.open_counts ?? live) };
+  // new alerts announced over WS count at once (the list's counts follow on its re-read)
+  for (const a of items) if (a.pending) counts[a.severity] += 1;
   const total = counts.critical + counts.warning + counts.info;
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);

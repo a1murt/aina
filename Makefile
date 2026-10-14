@@ -52,7 +52,7 @@ migrate: up ## apply Alembic migrations to the compose database
 
 # ------------------------------------------------------------------ quality
 
-check: py-lint py-type py-test web-check ## ruff + mypy + pytest (no integration) + eslint + tsc
+check: py-lint py-type py-test web-check ## ruff + mypy + pytest (no integration) + eslint + tsc + web unit tests
 
 py-lint:
 	$(UV) run ruff check .
@@ -67,6 +67,7 @@ py-test:
 web-check: web-install
 	$(PNPM) --dir $(WEB) lint
 	$(PNPM) --dir $(WEB) typecheck
+	$(PNPM) --dir $(WEB) test:unit
 
 web-install: $(WEB)/node_modules/.modules.yaml
 
