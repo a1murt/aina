@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from qost_sim.bus import MemoryBus
 from qost_sim.live import LiveRunner, RunnerError, warm_model
@@ -206,3 +207,39 @@ async def test_commands_need_a_ready_simulator(cfg: TwinConfig) -> None:
     await runner.start_up()
     assert runner.state == "paused"
     assert clock(_bus).paused
+
+
+class DownBus(MemoryBus):
+    """A bus whose Redis raises redis-py errors (not builtins.ConnectionError) while ``down``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+
+    async def get(self, key: str) -> str | None:
+        if self.down:
+            raise RedisConnectionError("Error 111 connecting to redis:6379")
+        return await super().get(key)
+
+    async def set(self, key: str, value: str) -> None:
+        if self.down:
+            raise RedisConnectionError("Error 111 connecting to redis:6379")
+        await super().set(key, value)
+
+
+async def test_redis_errors_do_not_stop_the_simulation(cfg: TwinConfig) -> None:
+    """STAB-3: redis.exceptions.ConnectionError while publishing the clock keeps simulating."""
+    bus = DownBus()
+    runner, mono, _ = make_runner(cfg, bus)
+    demo = cfg.simulation.clock.demo_start
+    await runner.start_up()
+    bus.down = True
+    await advance(runner, mono, 5)
+    assert runner.plant_time == demo + timedelta(minutes=5)
+    await runner.pause()
+    await runner.start()
+    bus.down = False
+    await advance(runner, mono, 1)
+    async with runner._lock:
+        await runner._publish_clock()
+    assert clock(bus).plant_time == demo + timedelta(minutes=6)

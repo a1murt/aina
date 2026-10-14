@@ -178,3 +178,44 @@ def test_create_clock_by_mode() -> None:
     sim = create_clock(TwinSettings(clock_mode="sim"), store=FakeKV())
     assert isinstance(sim, SimClock)
     assert sim.mode == "sim"
+
+
+class FlakyKV(FakeKV):
+    """Raises redis-py errors (not builtins.ConnectionError / OSError) while ``down``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.down = False
+        self.errors = 0
+
+    async def get(self, key: str) -> str | None:
+        if self.down:
+            from redis.exceptions import ConnectionError as RedisConnectionError
+
+            self.errors += 1
+            raise RedisConnectionError("Error 111 connecting to redis:6379")
+        return await super().get(key)
+
+
+async def test_sim_clock_poll_survives_redis_errors() -> None:
+    """STAB-3: a redis-py error must not end the poll (the clock would extrapolate forever)."""
+    kv, wall = FlakyKV(), FakeWall(WALL0)
+    await publish_clock_state(kv, ClockState(plant_time=T0, wall_ts=WALL0, speed=1.0))
+    async with SimClock(kv, wall=wall, poll_interval_s=0.01) as clock:
+        assert clock.now() == T0
+        kv.down = True
+        for _ in range(100):
+            if kv.errors >= 3:
+                break
+            await asyncio.sleep(0.01)
+        assert kv.errors >= 3
+        assert clock._task is not None
+        assert not clock._task.done()
+        kv.down = False
+        later = T0 + timedelta(hours=1)
+        await publish_clock_state(kv, ClockState(plant_time=later, wall_ts=WALL0, speed=1.0))
+        for _ in range(100):
+            if clock.now() == later:
+                break
+            await asyncio.sleep(0.01)
+        assert clock.now() == later
