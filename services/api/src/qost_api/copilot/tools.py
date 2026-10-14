@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from qost_api.auth import Principal
 from qost_api.deps import Page
+from qost_api.forecast.service import ForecastError
 from qost_api.llm import ToolSpec
 from qost_api.problems import ProblemError
 from qost_api.queries.limits import limit_forecasts
@@ -136,6 +137,15 @@ TOOLS: tuple[ToolDef, ...] = (
         "get_forecast",
         "Forecast of the month output (P10/P50/P90, probability of the plan and of the target, "
         "shortfall, required rate per shift). Default month: the current one.",
+        {"month": {"type": "string", "description": "YYYY-MM"}},
+        (),
+        _roles("director"),
+    ),
+    ToolDef(
+        "get_levers",
+        "Levers of the month plan: extra shifts, defect norm, filter policy, failure-free units, "
+        "buffer size — each with the expected +cars, the change of the probability to reach each "
+        "target and the effect in tenge; plus how many extra shifts reach each target.",
         {"month": {"type": "string", "description": "YYYY-MM"}},
         (),
         _roles("director"),
@@ -261,6 +271,8 @@ class Toolbox:
             result = await handler(arguments)
         except ProblemError as exc:
             raise ToolError(exc.detail or exc.title) from exc
+        except ForecastError as exc:
+            raise ToolError(exc.detail) from exc
         return result
 
     # ------------------------------------------------------------------ tools
@@ -401,7 +413,34 @@ class Toolbox:
             "summary": data["summary"],
             "expected_shortfall": data["expected_shortfall"],
             "required_rate": data["required_rate"],
-            "remaining_shifts": data.get("horizon", {}).get("remaining_shifts"),
+            "remaining_shifts": (data.get("horizon") or {}).get("working_shifts"),
+        }
+
+    async def _get_levers(self, a: dict[str, Any]) -> Any:
+        if self.forecast_service is None:
+            raise ToolError("levers are not available")
+        result = await self.forecast_service.levers(a.get("month"), self.principal)
+        data = result.model_dump(mode="json")
+        levers = sorted(data["levers"], key=lambda lv: lv["rank"])[:10]
+        return {
+            "month": data["month"],
+            "as_of": data["as_of"],
+            "base": data["base"],
+            "levers": [
+                {
+                    "id": lv["id"],
+                    "kind": lv["kind"],
+                    "params": lv["params"],
+                    "delta_p50": lv["delta_p50"],
+                    "delta_mean": lv["delta_mean"],
+                    "delta_p_reach": lv["delta_p_reach"],
+                    "effect_kzt": {"p50": lv["effect_kzt"]["p50"]},
+                    "rank": lv["rank"],
+                    "top": lv["top"],
+                }
+                for lv in levers
+            ],
+            "shifts_needed_for_target": data["shifts_needed_for_target"],
         }
 
     async def _get_equipment_health(self, a: dict[str, Any]) -> Any:
