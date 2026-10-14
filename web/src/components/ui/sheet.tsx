@@ -3,6 +3,7 @@
 import { X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
@@ -16,16 +17,33 @@ function focusables(root: HTMLElement): HTMLElement[] {
 }
 
 /**
- * Panel: a slide-out from the right (`side="right"`) or a centred dialog.
+ * The panel on top: no other dialog follows it in document order. Sheets are portalled to
+ * `<body>` when they open, so the one opened last is painted on top and is the one that answers
+ * Esc and keeps Tab.
+ */
+function isTopmost(el: HTMLElement): boolean {
+  for (const d of document.querySelectorAll<HTMLElement>('[role="dialog"]')) {
+    if (d === el || el.contains(d) || d.contains(el)) continue;
+    if (el.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) return false;
+  }
+  return true;
+}
+
+/**
+ * Panel: a slide-out from the right (`side="right"`) or a centred dialog, rendered into
+ * `<body>` (a portal), so a panel opened from the sticky header (copilot) is not trapped in the
+ * header's stacking context: the panel opened last is on top (it never opens under another).
  *
  * - `modal` (default): dimmed backdrop that closes on click, the page behind is inert to the
  *   pointer, Tab / Shift+Tab cycle inside the panel, Esc closes.
  * - `modal={false}`: no backdrop, the page stays interactive (a side tool panel next to a chart);
- *   Esc closes while focus is inside the panel.
+ *   Esc closes it too, wherever the focus is (it leaves the panel when «Рассчитать» disables
+ *   the button).
  *
- * Focus moves into the panel when it opens and back to the opener when it closes. The effect
- * depends on `open` only (`onClose` is read through a ref), so parent re-renders — inline
- * `onClose`, clock ticks, typing — never move the focus (FE-1).
+ * Only the panel on top answers Esc and keeps Tab: a panel with another dialog over it stays
+ * open. Focus moves into the panel when it opens and back to the opener when it closes. The
+ * effect depends on `open` only (`onClose` is read through a ref), so parent re-renders —
+ * inline `onClose`, clock ticks, typing — never move the focus (FE-1).
  */
 export function Sheet({
   open,
@@ -65,12 +83,15 @@ export function Sheet({
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || !el) return;
-      const inside = e.target instanceof Node && el.contains(e.target);
+      if (e.key !== "Escape" && e.key !== "Tab") return;
+      // a dialog opened over this one (e.g. the copilot over what-if) answers the key itself
+      if (!isTopmost(el)) return;
       if (e.key === "Escape") {
-        if (modalRef.current || inside) onCloseRef.current();
+        onCloseRef.current();
         return;
       }
-      if (e.key !== "Tab" || !modalRef.current) return;
+      if (!modalRef.current) return;
+      const inside = e.target instanceof Node && el.contains(e.target);
       const items = focusables(el);
       const first = items[0];
       const last = items[items.length - 1];
@@ -104,7 +125,7 @@ export function Sheet({
 
   if (!open) return null;
   const headingId = labelledBy ?? `sheet-title-${autoId}`;
-  return (
+  const node = (
     <div className={cn("fixed inset-0 z-50 flex", !modal && "pointer-events-none")}>
       {modal ? (
         <div
@@ -145,4 +166,5 @@ export function Sheet({
       </div>
     </div>
   );
+  return typeof document === "undefined" ? node : createPortal(node, document.body);
 }

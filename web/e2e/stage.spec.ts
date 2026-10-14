@@ -47,6 +47,29 @@ async function percentages(page: Page, selector: string): Promise<number[]> {
     await expect(field).toBeFocused();
   });
 
+  test("what-if closes on Esc after «Рассчитать»; the copilot opens over it", async ({ page }) => {
+    await login(page, "director");
+    await page.getByTestId("open-what-if").click();
+    await page.getByTestId("defect-PAINT").fill("3");
+    await page.getByTestId("what-if-run").click(); // the button is disabled while it runs: focus leaves the panel
+    await expect(page.getByTestId("scenario-comparison").first()).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("what-if-panel")).toHaveCount(0);
+
+    await page.getByTestId("open-what-if").click();
+    await expect(page.getByTestId("what-if-panel")).toBeVisible();
+    await page.getByTestId("copilot-open").click();
+    // the copilot is on top: its input takes the click (a panel under what-if would not)
+    await page.getByTestId("copilot-input").click({ timeout: 5_000 });
+    await expect(page.getByTestId("copilot-input")).toBeFocused();
+    // Esc closes the panel on top only
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("copilot-panel")).toHaveCount(0);
+    await expect(page.getByTestId("what-if-panel")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("what-if-panel")).toHaveCount(0);
+  });
+
   test("equipment drawer on /live keeps the focus (FE-1)", async ({ page }) => {
     await login(page, "master");
     await page.goto("/live");

@@ -194,7 +194,7 @@ async function main() {
     await page.getByTestId("what-if-run").click();
     await page.getByTestId("scenario-comparison").first().waitFor({ timeout: 15_000 });
     await sleep(6500);
-    // the what-if panel is non-modal: Esc closes it only while focus is inside, so use ✕
+    // close with ✕, as the presenter does (Esc closes the non-modal panel too)
     await page.getByRole("dialog").getByRole("button", { name: "Закрыть" }).click();
     await sleep(1000);
     await say("Рычаги с эффектом в машинах и тенге; эффект «с системой» ≈ 80 млн ₸ в месяц (допущения помечены)");
