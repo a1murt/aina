@@ -4,7 +4,9 @@ import { Calculator, Loader2, RotateCcw, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, type ReactNode } from "react";
 
+import { leverMoney } from "@/components/director/panels";
 import { usePlant } from "@/components/plant-context";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import type { AreaLive, EffectResult, ForecastRunView, KpiRow, Overrides } from "@/lib/api/types";
@@ -101,6 +103,7 @@ export function WhatIfPanel({
   result,
   effect,
   error,
+  lineKey,
 }: {
   open: boolean;
   onClose: () => void;
@@ -114,6 +117,8 @@ export function WhatIfPanel({
   result: ForecastRunView | null;
   effect: EffectResult | null;
   error: string | null;
+  /** Target key of the line plan (P shown large in the result). */
+  lineKey: string | null;
 }) {
   const t = useTranslations("director.whatIf");
   const plant = usePlant();
@@ -151,6 +156,8 @@ export function WhatIfPanel({
       onClose={onClose}
       title={t("title")}
       labelledBy="what-if-title"
+      modal={false}
+      className="max-w-[420px]"
       footer={
         <div className="flex items-center gap-2">
           <Button onClick={onRun} disabled={running} data-testid="what-if-run" className="h-10 flex-1">
@@ -168,7 +175,14 @@ export function WhatIfPanel({
         {result?.result || error ? (
           <div className="border-b bg-muted/40 px-5 py-4">
             {error ? <p className="text-sm text-severity-critical">{error}</p> : null}
-            {result?.result ? <Comparison run={result} effect={effect} /> : null}
+            {result?.result ? (
+              <>
+                <ResultHero run={result} effect={effect} lineKey={lineKey} />
+                <div className="mt-4 border-t pt-2">
+                  <Comparison run={result} effect={effect} compact />
+                </div>
+              </>
+            ) : null}
           </div>
         ) : null}
 
@@ -189,7 +203,7 @@ export function WhatIfPanel({
                       data-testid={`defect-${a.code}`}
                       className={input}
                       value={v != null ? +(v * 100).toFixed(2) : ""}
-                      placeholder={cur != null ? (cur * 100).toFixed(1) : ""}
+                      placeholder={cur != null ? plant.fmt.num(cur * 100, 1) : ""}
                       onChange={(e) =>
                         onChange({ ...value, defect_rate: setKey(value.defect_rate, a.code, e.target.value === "" ? null : Number(e.target.value) / 100) })
                       }
@@ -344,6 +358,61 @@ export function WhatIfPanel({
         </Group>
       </div>
     </Sheet>
+  );
+}
+
+/**
+ * The what-if answer in large type at the top of the panel (VIS-7): P(line plan) base → scenario,
+ * P50 base → scenario with the paired Δ, and the money effect per month (an assumption).
+ */
+export function ResultHero({ run, effect, lineKey }: { run: ForecastRunView; effect: EffectResult | null; lineKey: string | null }) {
+  const t = useTranslations("director.whatIf.hero");
+  const tt = useTranslations("director.tiles");
+  const plant = usePlant();
+  const r = run.result;
+  if (!r) return null;
+  const key = lineKey && lineKey in r.targets ? lineKey : (Object.keys(r.targets)[0] ?? null);
+  const base = r.base;
+  const delta = r.delta?.paired.p50 ?? (base ? r.summary.p50 - base.summary.p50 : null);
+  const money = effect ? leverMoney(effect.month_kzt) : null;
+  const big = "text-[28px] leading-tight font-semibold tracking-tight tabular-nums";
+  return (
+    <div data-testid="what-if-hero" className="space-y-3">
+      {key ? (
+        <div>
+          <p className="text-xs text-muted-foreground">{t("p", { qty: plant.fmt.int(r.targets[key] ?? 0) })}</p>
+          <p className={big} data-testid="hero-p">
+            {base ? <span className="text-muted-foreground">{plant.fmt.pct(base.p_reach[key] ?? 0, 0)}</span> : null}
+            {base ? <span className="mx-1.5 text-muted-foreground">→</span> : null}
+            <span className="text-severity-info">{plant.fmt.pct(r.p_reach[key] ?? 0, 0)}</span>
+          </p>
+        </div>
+      ) : null}
+      <div>
+        <p className="text-xs text-muted-foreground">{t("p50")}</p>
+        <p className={big} data-testid="hero-p50">
+          {base ? <span className="text-muted-foreground">{plant.fmt.int(base.summary.p50)}</span> : null}
+          {base ? <span className="mx-1.5 text-muted-foreground">→</span> : null}
+          <span className="text-severity-info">{plant.fmt.int(r.summary.p50)}</span>
+        </p>
+        {delta != null ? <p className="text-sm font-medium tabular-nums">{t("delta", { d: plant.fmt.signed(delta, 0) })}</p> : null}
+      </div>
+      {money ? (
+        <div>
+          <p className="text-xs text-muted-foreground">{t("money")}</p>
+          <p className="flex flex-wrap items-center gap-2">
+            <span className={big}>
+              {money.value > 0 ? "+" : ""}
+              {plant.fmt.money(money.value)}
+            </span>
+            <Badge tone="warning" title={tt("assumptionHint")}>
+              {tt("assumption")}
+            </Badge>
+          </p>
+          <p className="text-xs text-muted-foreground">{money.mean ? t("perMonthMean") : t("perMonth")}</p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

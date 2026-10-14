@@ -1,9 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { api } from "@/lib/api/client";
 import type {
+  AlertsPage,
   BottleneckResponse,
   EffectResult,
   ForecastRunView,
@@ -15,28 +17,131 @@ import type {
   ReportView,
 } from "@/lib/api/types";
 
+import { useLive, usePaused } from "@/lib/live-store";
+
+/**
+ * Line capacity for the month (additive field of GET /plan/progress): bottleneck ICT × calendar
+ * shifts. Absent on older APIs, null when the month has no plan.
+ */
+export interface PlanCeiling {
+  qty: number;
+  rate_per_shift: number;
+  shifts: number;
+}
+
+/** GET /plan/progress with the optional fields the director screen reads defensively. */
+export type DirectorPlan = Omit<PlanProgress, "unallocated"> & {
+  /** null for a month without a plan (STAB-7). */
+  unallocated: number | null;
+  ceiling?: PlanCeiling | null;
+  output_line?: string | null;
+};
+
+/** Forecast-type queries re-read every 30 s while the plant clock runs (DEMO-3). */
+const LIVE_REFRESH_MS = 30_000;
+
+function useLiveInterval(): number | false {
+  return usePaused() ? false : LIVE_REFRESH_MS;
+}
+
 /** Director data (SPEC §13.2): one query per tile group, base forecast computed on open (AL-P1). */
 export function usePlanProgress() {
-  return useQuery({ queryKey: ["plan", "progress"], queryFn: () => api<PlanProgress>("/api/v1/plan/progress"), refetchInterval: 60_000 });
+  return useQuery({ queryKey: ["plan", "progress"], queryFn: () => api<DirectorPlan>("/api/v1/plan/progress"), refetchInterval: 60_000 });
 }
 
 export function useBaseForecast() {
+  const interval = useLiveInterval();
   return useQuery({
     queryKey: ["forecast", "base"],
     queryFn: () => api<ForecastRunView>("/api/v1/forecast", { method: "POST", body: { mode: "fast", compare: false } }),
-    staleTime: 120_000,
+    staleTime: 20_000,
+    refetchInterval: interval,
   });
 }
 
 export function useLevers() {
-  return useQuery({ queryKey: ["forecast", "levers"], queryFn: () => api<LeversResult>("/api/v1/forecast/levers"), staleTime: 300_000 });
+  const interval = useLiveInterval();
+  return useQuery({
+    queryKey: ["forecast", "levers"],
+    queryFn: () => api<LeversResult>("/api/v1/forecast/levers"),
+    staleTime: 20_000,
+    refetchInterval: interval,
+  });
 }
 
 /** «С системой» — the economic effect of the default scenario (SPEC §10.5). */
 export function useSystemEffect() {
+  const interval = useLiveInterval();
   return useQuery({
     queryKey: ["effect", "system"],
     queryFn: () => api<EffectResult>("/api/v1/effect", { method: "POST", body: {} }),
+    staleTime: 20_000,
+    refetchInterval: interval,
+  });
+}
+
+/**
+ * Alert rules whose firing changes the month forecast: an unplanned stop (AL-S1) and the plan
+ * risk alert (AL-P1, raised by the engine's own forecast). Rule ids are the SPEC §7 contract.
+ */
+const FORECAST_ALERT_RULES = ["AL-S1", "AL-P1"] as const;
+
+/** Query groups that depend on the plant state: re-read together. */
+const STATE_KEYS = [["forecast"], ["effect"], ["plan"], ["kpi"], ["bottleneck"]] as const;
+
+/**
+ * Keeps the director tiles and the what-if base on the same plant state (DEMO-3): refetch when
+ * the clock pauses (the presenter stops to talk) and when an AL-S1 / AL-P1 alert appears or
+ * changes status. A new timeline (demo reset) is handled globally by `Providers` (epochSeq).
+ */
+export function useDirectorFreshness(): void {
+  const qc = useQueryClient();
+  const paused = usePaused();
+  const wasPaused = useRef(paused);
+  useEffect(() => {
+    if (paused && !wasPaused.current) {
+      for (const queryKey of STATE_KEYS) void qc.invalidateQueries({ queryKey: [...queryKey] });
+    }
+    wasPaused.current = paused;
+  }, [paused, qc]);
+
+  const watch = useQuery({
+    queryKey: ["alerts", "forecast-watch"],
+    queryFn: () => api<AlertsPage>("/api/v1/alerts", { query: { rule_id: FORECAST_ALERT_RULES, limit: 5 } }),
+    staleTime: 2_000,
+  });
+  // the engine announces an alert before its writer commits the row: re-read a moment later
+  const seq = useLive((s) => s.alertSeq);
+  useEffect(() => {
+    if (seq === 0) return;
+    const a = setTimeout(() => void qc.invalidateQueries({ queryKey: ["alerts", "forecast-watch"] }), 1_200);
+    return () => clearTimeout(a);
+  }, [seq, qc]);
+  const signature = watch.data ? watch.data.items.map((a) => `${a.id}:${a.status}`).join("|") : null;
+  const seen = useRef<string | null>(null);
+  useEffect(() => {
+    if (signature === null) return;
+    if (seen.current !== null && seen.current !== signature) {
+      for (const queryKey of STATE_KEYS) void qc.invalidateQueries({ queryKey: [...queryKey] });
+    }
+    seen.current = signature;
+  }, [signature, qc]);
+}
+
+/** Effective thresholds the director screen draws (GET /config/rules → thresholds, SPEC §7). */
+export interface DirectorThresholds {
+  oee_target?: number;
+  defect_rate_limit?: number;
+  plan_risk_warn_p?: number;
+  plan_risk_crit_p?: number;
+  /** Target key watched by AL-P1: `line_plan` or `plant_target`. */
+  plan_risk_target?: string;
+}
+
+export function useThresholds() {
+  return useQuery({
+    queryKey: ["config", "rules", "thresholds"],
+    queryFn: async () => (await api<{ thresholds: DirectorThresholds }>("/api/v1/config/rules")).thresholds,
     staleTime: 300_000,
   });
 }
