@@ -36,6 +36,25 @@ function StateLegend() {
   );
 }
 
+/** Body colours of the flow (VIS-12): one dot per product model. */
+function ModelLegend() {
+  const t = useTranslations("live");
+  const plant = usePlant();
+  const products = plant.assets?.products ?? [];
+  if (products.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-label={t("modelLegend")} data-testid="model-legend">
+      <li className="font-medium">{t("modelLegend")}:</li>
+      {products.map((p) => (
+        <li key={p.code} className="flex items-center gap-1.5">
+          <span aria-hidden className="size-3 rounded-full border border-card shadow-[0_0_0_1px_var(--border)]" style={{ background: plant.productColor(p.code) }} />
+          {p.name}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** /live — the plant online (SPEC §13.2): schema, line KPIs, shift Gantt, incidents; ?tv=1. */
 export function LiveView() {
   const t = useTranslations("live");
@@ -79,8 +98,9 @@ export function LiveView() {
           {ready ? null : <p className="px-2 pb-2 text-sm text-muted-foreground">{t("waiting")}</p>}
           <PlantSchema selected={selected} onSelect={setSelected} />
         </div>
-        <div className="border-t px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t px-4 py-2.5">
           <StateLegend />
+          <ModelLegend />
         </div>
       </Card>
       <LineKpis />

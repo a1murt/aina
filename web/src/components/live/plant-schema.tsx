@@ -2,17 +2,29 @@
 
 import { Hourglass } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { usePlant, type Plant } from "@/components/plant-context";
 import { equipmentIcon, storageIcon } from "@/components/live/icons";
-import type { AreaAsset, BufferAsset, BufferLive, EquipmentAsset, EquipmentLive, LineLive, UnitEvent } from "@/lib/api/types";
+import { useStopImpacts } from "@/components/live/stop-impact";
+import { fitText, textWidth } from "@/components/live/text-fit";
+import type { AreaAsset, BufferAsset, BufferLive, EquipmentAsset, EquipmentLive, LineLive, StateCode, UnitEvent } from "@/lib/api/types";
 import { onUnit, useLive } from "@/lib/live-store";
 import { stateMeta } from "@/lib/states";
 import { cn } from "@/lib/utils";
 
-const NODE_W = 80;
-const NODE_H = 48;
+/** Node box in schema units: room for a 13 px code and an 11 px state label (VIS-4). */
+const NODE_W = 104;
+const NODE_H = 56;
+const CODE_PX = 13;
+const CODE_MIN_PX = 11;
+const STATE_PX = 11;
+/** A buffer forecast within this horizon (minutes) is a risk worth an amber outline. */
+const BUFFER_RISK_MIN = 30;
+/** States in which a line consumes and produces — the flow moves only through these. */
+const FLOWING: ReadonlySet<string> = new Set<StateCode>(["RUNNING", "DEGRADED"]);
+/** States in which a line takes nothing in: its empty input buffer is no risk. */
+const NOT_CONSUMING: ReadonlySet<string> = new Set<StateCode>(["IDLE_NO_PLAN", "DOWN_PLANNED", "CHANGEOVER"]);
 
 type Pt = [number, number];
 
@@ -77,10 +89,66 @@ interface Body {
   ict: number;
 }
 
+/** The path between arc lengths s0 and s1 as an SVG path `d`. */
+function subPath(g: PathGeo, s0: number, s1: number): string {
+  const pts: Pt[] = [pointAt(g, s0)];
+  g.pts.forEach((p, i) => {
+    const c = g.cum[i] ?? 0;
+    if (c > s0 && c < s1) pts.push(p);
+  });
+  pts.push(pointAt(g, s1));
+  return pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+}
+
+/**
+ * Marching dashes of the flow, one section per line (its area and the way to the next one). A
+ * section moves only while the line runs and the plant clock is not paused (VIS-12); a section
+ * of a line in an unplanned stop turns red.
+ */
+function FlowDash({ geo, plant }: { geo: PathGeo; plant: Plant }) {
+  const flow = useMemo(() => plant.assets?.flow ?? [], [plant.assets]);
+  // one string: re-render only when a line state or the pause flag changes, not on KPI deltas
+  const key = useLive((s) => `${s.paused ? 1 : 0}|${flow.map((c) => s.lines[c]?.state ?? "").join(",")}`);
+  const sections = useMemo(() => {
+    const x0 = geo.pts[0]?.[0] ?? 0;
+    const xEnd = geo.pts[geo.pts.length - 1]?.[0] ?? 0;
+    return flow.map((code, i) => {
+      const area = plant.lines[code] ? plant.areas[plant.lines[code].area]?.layout : undefined;
+      const nextCode = flow[i + 1];
+      const next = nextCode && plant.lines[nextCode] ? plant.areas[plant.lines[nextCode].area]?.layout : undefined;
+      const s0 = arcAtX(geo, i === 0 ? x0 : (area?.x ?? x0));
+      const s1 = arcAtX(geo, next ? next.x : xEnd);
+      return { code, d: subPath(geo, s0, s1) };
+    });
+  }, [geo, flow, plant.lines, plant.areas]);
+  const [pausedFlag, statesStr = ""] = key.split("|");
+  const states = statesStr.split(",");
+  return (
+    <>
+      {sections.map((sec, i) => {
+        const st = states[i] ?? "";
+        const moving = pausedFlag === "0" && FLOWING.has(st);
+        return (
+          <path
+            key={sec.code}
+            d={sec.d}
+            data-testid={`flow-${sec.code}`}
+            data-moving={moving ? "1" : "0"}
+            className={cn("flow-dash fill-none", st === "DOWN_UNPLANNED" ? "stroke-isa-alarm/70" : "stroke-muted-foreground/60")}
+            strokeWidth={2}
+            strokeDasharray="6 10"
+          />
+        );
+      })}
+    </>
+  );
+}
+
 /**
  * Flow path with bodies (SPEC §13.3): every completed unit (`unit` WS event) runs through its
  * line's section of the path and on to the next buffer; speed = simulation speed (progress is
- * plant seconds / ICT, frozen when paused), colour = product model.
+ * plant seconds / ICT, frozen when paused), colour = product model. The animation frame loop
+ * runs only while bodies are on the path.
  */
 const FlowPath = memo(function FlowPath({ geo, plant }: { geo: PathGeo; plant: Plant }) {
   const layer = useRef<SVGGElement>(null);
@@ -106,20 +174,6 @@ const FlowPath = memo(function FlowPath({ geo, plant }: { geo: PathGeo; plant: P
   useEffect(() => {
     const g = layer.current;
     if (!g) return;
-    const off = onUnit((u: UnitEvent) => {
-      const sec = sections[u.line];
-      if (!sec || bodies.current.length > 80) return;
-      const el = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      el.setAttribute("r", "7");
-      el.setAttribute("fill", plant.productColor(u.product));
-      el.setAttribute("class", u.result === "pass" ? "body-ok" : "body-defect");
-      el.setAttribute("data-product", u.product);
-      const [x, y] = pointAt(geo, sec.s0);
-      el.setAttribute("cx", String(x));
-      el.setAttribute("cy", String(y));
-      g.appendChild(el);
-      bodies.current.push({ el, s0: sec.s0, s1: sec.s1, s2: sec.s2, p: 0, ict: sec.ict });
-    });
     let raf = 0;
     let last = performance.now();
     const frame = (now: number) => {
@@ -142,9 +196,26 @@ const FlowPath = memo(function FlowPath({ geo, plant }: { geo: PathGeo; plant: P
         keep.push(b);
       }
       bodies.current = keep;
-      raf = requestAnimationFrame(frame);
+      raf = keep.length > 0 ? requestAnimationFrame(frame) : 0;
     };
-    raf = requestAnimationFrame(frame);
+    const off = onUnit((u: UnitEvent) => {
+      const sec = sections[u.line];
+      if (!sec || bodies.current.length > 80) return;
+      const el = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      el.setAttribute("r", "7");
+      el.setAttribute("fill", plant.productColor(u.product));
+      el.setAttribute("class", u.result === "pass" ? "body-ok" : "body-defect");
+      el.setAttribute("data-product", u.product);
+      const [x, y] = pointAt(geo, sec.s0);
+      el.setAttribute("cx", String(x));
+      el.setAttribute("cy", String(y));
+      g.appendChild(el);
+      bodies.current.push({ el, s0: sec.s0, s1: sec.s1, s2: sec.s2, p: 0, ict: sec.ict });
+      if (raf === 0) {
+        last = performance.now();
+        raf = requestAnimationFrame(frame);
+      }
+    });
     return () => {
       off();
       cancelAnimationFrame(raf);
@@ -156,8 +227,8 @@ const FlowPath = memo(function FlowPath({ geo, plant }: { geo: PathGeo; plant: P
   const d = geo.pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0]},${p[1]}`).join(" ");
   return (
     <g aria-hidden>
-      <path d={d} className="fill-none stroke-border" strokeWidth={14} strokeLinecap="round" strokeLinejoin="round" />
-      <path d={d} className="flow-dash fill-none stroke-muted-foreground/50" strokeWidth={2} strokeDasharray="6 10" />
+      <path d={d} className="fill-none stroke-schema-line/70" strokeWidth={14} strokeLinecap="round" strokeLinejoin="round" />
+      <FlowDash geo={geo} plant={plant} />
       <g ref={layer} data-testid="bodies" />
     </g>
   );
@@ -202,6 +273,12 @@ function EquipmentNode({
   const x = pos.x - NODE_W / 2;
   const y = pos.y - NODE_H / 2;
   const down = state === "DOWN_UNPLANNED";
+  const label = t(`short.${state}` as Parameters<typeof t>[0]);
+  // the code matters more than its size: shrink a long code (BOOTH-01) before cutting it
+  const codeRoom = NODE_W - 34;
+  const codePx = Math.max(CODE_MIN_PX, Math.min(CODE_PX, (CODE_PX * codeRoom) / textWidth(eq.code, CODE_PX, 600)));
+  const code = fitText(eq.code, codeRoom, codePx, 600);
+  const stateText = fitText(label, NODE_W - 32, STATE_PX);
   return (
     <g
       role="button"
@@ -211,7 +288,12 @@ function EquipmentNode({
       data-state={state}
       className="cursor-pointer outline-none [&:focus-visible>rect.node]:stroke-ring"
       onClick={() => onSelect(eq.code)}
-      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onSelect(eq.code)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(eq.code);
+        }
+      }}
       onMouseEnter={() => onHover(eq.code)}
       onMouseLeave={() => onHover(null)}
     >
@@ -226,20 +308,34 @@ function EquipmentNode({
         strokeWidth={selected ? 3 : meta.abnormal ? 2.5 : 1.5}
       />
       {/* type icon + code */}
-      <Icon x={x + 8} y={y + 8} width={18} height={18} className={meta.abnormal ? meta.text : "text-muted-foreground"} strokeWidth={1.75} />
-      <text x={x + 30} y={y + 22} className="fill-foreground text-[11.5px] font-semibold">
-        {eq.code}
+      <Icon x={x + 8} y={y + 9} width={18} height={18} className={meta.abnormal ? meta.text : "text-muted-foreground"} strokeWidth={1.75} />
+      <text x={x + 30} y={y + 23.5} className="fill-foreground font-semibold" style={{ fontSize: codePx }}>
+        {code.truncated ? <title>{eq.code}</title> : null}
+        {code.text}
       </text>
-      {/* state icon + short label */}
-      <meta.Icon x={x + 8} y={y + 28} width={14} height={14} className={meta.abnormal ? meta.text : "text-muted-foreground"} strokeWidth={2} />
-      <text x={x + 26} y={y + 40} className={cn("text-[10px]", meta.abnormal ? meta.textFill : "fill-muted-foreground")}>
-        {t(`short.${state}` as Parameters<typeof t>[0])}
+      {/* state icon + short label (kept last: label probes read the node's last <text>) */}
+      <meta.Icon x={x + 8} y={y + 33} width={14} height={14} className={meta.abnormal ? meta.text : "text-muted-foreground"} strokeWidth={2} />
+      <text x={x + 26} y={y + 44} className={cn("text-[11px]", meta.abnormal ? meta.textFill : "fill-muted-foreground")}>
+        {stateText.truncated ? <title>{label}</title> : null}
+        {stateText.text}
       </text>
     </g>
   );
 }
 
-function BufferTank({ buf, live, onHover }: { buf: BufferAsset; live: BufferLive | undefined; onHover: (c: string | null) => void }) {
+function BufferTank({
+  buf,
+  live,
+  upState,
+  downState,
+  onHover,
+}: {
+  buf: BufferAsset;
+  live: BufferLive | undefined;
+  upState: string | null | undefined;
+  downState: string | null | undefined;
+  onHover: (c: string | null) => void;
+}) {
   const t = useTranslations("live.schema");
   const r = buf.layout;
   if (!r) return null;
@@ -248,10 +344,23 @@ function BufferTank({ buf, live, onHover }: { buf: BufferAsset; live: BufferLive
   const ratio = cap > 0 ? Math.min(1, Math.max(0, level / cap)) : 0;
   const toFull = live?.minutes_to_full;
   const toEmpty = live?.minutes_to_empty;
-  const risk = (toFull != null && toFull <= 30) || (toEmpty != null && toEmpty <= 30) || ratio >= 0.95 || ratio <= 0.05;
+  // a buffer is a risk only while the neighbouring line can actually block or starve:
+  // an empty EOL in front of an idle QC line is just empty (FE-14)
+  const consuming = !NOT_CONSUMING.has(downState ?? "IDLE_NO_PLAN");
+  const producing = !NOT_CONSUMING.has(upState ?? "IDLE_NO_PLAN");
+  const fullRisk = producing && ((toFull != null && toFull <= BUFFER_RISK_MIN) || ratio >= 0.95);
+  const emptyRisk = consuming && ((toEmpty != null && toEmpty <= BUFFER_RISK_MIN) || (ratio <= 0.05 && downState === "STARVED"));
+  const risk = fullRisk || emptyRisk;
   const fillH = (r.h - 4) * ratio;
+  const forecast =
+    toFull != null ? t("toFullShort", { min: Math.round(toFull) }) : toEmpty != null ? t("toEmptyShort", { min: Math.round(toEmpty) }) : null;
   return (
-    <g data-testid={`buffer-${buf.code}`} onMouseEnter={() => onHover(buf.code)} onMouseLeave={() => onHover(null)}>
+    <g
+      data-testid={`buffer-${buf.code}`}
+      data-risk={risk ? "1" : undefined}
+      onMouseEnter={() => onHover(buf.code)}
+      onMouseLeave={() => onHover(null)}
+    >
       <text x={r.x + r.w / 2} y={r.y - 8} textAnchor="middle" className="fill-muted-foreground text-[11px] font-semibold">
         {buf.code}
       </text>
@@ -267,10 +376,39 @@ function BufferTank({ buf, live, onHover }: { buf: BufferAsset; live: BufferLive
       <text x={r.x + r.w / 2} y={r.y + r.h / 2 + 5} textAnchor="middle" className="fill-foreground text-[13px] font-semibold tabular-nums">
         {level}/{cap}
       </text>
-      <text x={r.x + r.w / 2} y={r.y + r.h + 16} textAnchor="middle" className={cn("text-[10px] tabular-nums", risk ? "fill-foreground font-semibold" : "fill-muted-foreground")}>
-        {toFull != null ? t("toFull", { min: Math.round(toFull) }) : toEmpty != null ? t("toEmpty", { min: Math.round(toEmpty) }) : t("steady")}
-      </text>
+      {forecast ? (
+        <text
+          x={r.x + r.w / 2}
+          y={r.y + r.h + 16}
+          textAnchor="middle"
+          data-testid={`buffer-forecast-${buf.code}`}
+          className={cn("text-[11px] tabular-nums", risk ? "fill-foreground font-semibold" : "fill-muted-foreground")}
+        >
+          {forecast}
+        </text>
+      ) : null}
     </g>
+  );
+}
+
+/** Pill over the bottleneck area, sized to its text (kk labels are long). */
+function BottleneckPill({ cx, top, label }: { cx: number; top: number; label: string }) {
+  const ref = useRef<SVGTextElement>(null);
+  const [width, setWidth] = useState(() => textWidth(label, 11.5, 600));
+  useLayoutEffect(() => {
+    const measured = ref.current?.getComputedTextLength();
+    if (measured && Math.abs(measured - width) > 0.5) setWidth(measured);
+  }, [label, width]);
+  const pillW = 12 + 14 + 6 + width + 12;
+  const x0 = cx - pillW / 2;
+  return (
+    <>
+      <rect x={x0} y={top - 25} width={pillW} height={24} rx={12} className="fill-isa-info-strong" />
+      <Hourglass x={x0 + 12} y={top - 20} width={14} height={14} className="text-white" strokeWidth={2.25} />
+      <text ref={ref} x={x0 + 32} y={top - 8.5} className="fill-white text-[11.5px] font-semibold">
+        {label}
+      </text>
+    </>
   );
 }
 
@@ -288,6 +426,7 @@ function AreaBlock({
   children?: ReactNode;
 }) {
   const t = useTranslations("live.schema");
+  const tl = useTranslations("live");
   const ts = useTranslations("states");
   const { name, fmt } = usePlant();
   const r = area.layout;
@@ -295,8 +434,15 @@ function AreaBlock({
   const storage = area.kind === "storage";
   const state = line?.state ?? (storage ? null : "IDLE_NO_PLAN");
   const meta = stateMeta(state);
-  const narrow = r.w < 200;
   const SIcon = storageIcon(area.code);
+  const title = name(area);
+  const titlePx = r.w < 200 ? 12 : 14;
+  const stateLabel = state ? ts(`short.${state}` as Parameters<typeof ts>[0]) : "";
+  const labelW = textWidth(stateLabel, 12, 600);
+  // the state label sits right-aligned; it is dropped (icon only) when it would meet the title
+  const showLabel = 12 + textWidth(title, titlePx, 600) + 16 + 20 + labelW + 12 <= r.w;
+  const iconX = showLabel ? r.x + r.w - 12 - labelW - 20 : r.x + r.w - 26;
+  const oee = fmt.ratioPct(line?.oee ?? null);
   return (
     <g data-testid={`area-${area.code}`} data-state={state ?? undefined}>
       <rect
@@ -306,8 +452,8 @@ function AreaBlock({
         height={r.h}
         rx={12}
         className={cn(
-          storage ? "fill-muted/40 stroke-border" : "fill-card/60",
-          !storage && (meta.abnormal ? meta.stroke : "stroke-border"),
+          storage ? "fill-muted/40 stroke-schema-line" : "fill-card/60",
+          !storage && (meta.abnormal ? meta.stroke : "stroke-schema-line"),
         )}
         strokeWidth={!storage && meta.abnormal ? 2.5 : 1.25}
         strokeDasharray={storage ? "5 5" : undefined}
@@ -321,26 +467,27 @@ function AreaBlock({
         </>
       ) : (
         <>
-          <text x={r.x + 12} y={r.y + 22} className={cn("fill-foreground font-semibold", narrow ? "text-[12px]" : "text-[14px]")}>
-            {name(area)}
+          <text x={r.x + 12} y={r.y + 22} className="fill-foreground font-semibold" style={{ fontSize: titlePx }}>
+            {title}
           </text>
           {state ? (
             <g>
               <title>{ts(state as Parameters<typeof ts>[0])}</title>
-              <meta.Icon x={r.x + r.w - (narrow ? 22 : 112)} y={r.y + 9} width={16} height={16} className={meta.abnormal ? meta.text : "text-muted-foreground"} strokeWidth={2} />
-              {narrow ? null : (
-                <text x={r.x + r.w - 92} y={r.y + 22} className={cn("text-[12px] font-semibold", meta.abnormal ? meta.textFill : "fill-muted-foreground")}>
-                  {ts(`short.${state}` as Parameters<typeof ts>[0])}
+              <meta.Icon x={iconX} y={r.y + 9} width={16} height={16} className={meta.abnormal ? meta.text : "text-muted-foreground"} strokeWidth={2} />
+              {showLabel ? (
+                <text x={r.x + r.w - 12} y={r.y + 22} textAnchor="end" className={cn("text-[12px] font-semibold", meta.abnormal ? meta.textFill : "fill-muted-foreground")}>
+                  {stateLabel}
                 </text>
-              )}
+              ) : null}
             </g>
           ) : null}
           {/* KPI strip */}
-          <line x1={r.x + 12} x2={r.x + r.w - 12} y1={r.y + r.h - 34} y2={r.y + r.h - 34} className="stroke-border" />
-          <text x={r.x + 14} y={r.y + r.h - 13} className="fill-muted-foreground text-[11px]">
+          <line x1={r.x + 12} x2={r.x + r.w - 12} y1={r.y + r.h - 34} y2={r.y + r.h - 34} className="stroke-schema-line" />
+          <text x={r.x + 14} y={r.y + r.h - 13} className="fill-muted-foreground text-[11px]" data-testid={`area-oee-${area.code}`} data-raw={oee.raw ?? undefined}>
+            {oee.clamped ? <title>{tl("earlyEstimate", { value: oee.rawText })}</title> : null}
             {t("oee")}
             <tspan className="fill-foreground text-[14px] font-semibold tabular-nums" dx={6}>
-              {fmt.pct(line?.oee ?? null)}
+              {oee.text}
             </tspan>
           </text>
           <text x={r.x + r.w - 14} y={r.y + r.h - 13} textAnchor="end" className="fill-muted-foreground text-[11px] tabular-nums">
@@ -351,14 +498,50 @@ function AreaBlock({
       )}
       {isBottleneck ? (
         <g data-testid={`bottleneck-${area.code}`}>
-          <rect x={r.x + r.w / 2 - 92} y={r.y - 25} width={184} height={24} rx={12} className="fill-severity-info" />
-          <Hourglass x={r.x + r.w / 2 - 82} y={r.y - 20} width={14} height={14} className="text-white" strokeWidth={2.25} />
-          <text x={r.x + r.w / 2 - 62} y={r.y - 8.5} className="fill-white text-[11.5px] font-semibold">
-            {share != null ? t("bottleneckShare", { share: Math.round(share * 100) }) : t("bottleneck")}
-          </text>
+          <BottleneckPill
+            cx={r.x + r.w / 2}
+            top={r.y}
+            label={share != null ? t("bottleneckShare", { share: Math.round(share * 100) }) : t("bottleneck")}
+          />
         </g>
       ) : null}
       {children}
+    </g>
+  );
+}
+
+/**
+ * Red callout under a unit in an unplanned stop: the output lost so far, as estimated by the
+ * engine for its AL-S1 alert (S14, VIS-1d) — not recomputed here.
+ */
+function LossCallouts({ plant }: { plant: Plant }) {
+  const t = useTranslations("live");
+  const impacts = useStopImpacts();
+  const down = useLive((s) =>
+    Object.values(s.equipment)
+      .filter((e) => e.state === "DOWN_UNPLANNED")
+      .map((e) => e.code)
+      .join(","),
+  );
+  const codes = down ? down.split(",") : [];
+  return (
+    <g aria-hidden>
+      {codes.map((code) => {
+        const pos = plant.equipment[code]?.layout;
+        const hit = impacts[code];
+        if (!pos || !hit || hit.lostUnits <= 0) return null;
+        const label = t("lossChip", { units: plant.fmt.num(hit.lostUnits, 1) });
+        const w = textWidth(label, 11.5, 600) + 16;
+        const top = pos.y + NODE_H / 2 + 6;
+        return (
+          <g key={code} data-testid={`loss-callout-${code}`}>
+            <rect x={pos.x - w / 2} y={top} width={w} height={20} rx={10} className="fill-card stroke-isa-alarm" strokeWidth={1.5} />
+            <text x={pos.x} y={top + 14} textAnchor="middle" className="fill-severity-critical text-[11.5px] font-semibold tabular-nums">
+              {label}
+            </text>
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -424,6 +607,11 @@ export function PlantSchema({
         lines: [
           t("level", { level: lv?.level ?? 0, capacity: lv?.capacity ?? buf.capacity }),
           lv?.rate_per_min != null ? t("rate", { rate: plant.fmt.num(lv.rate_per_min * 60, 1) }) : "",
+          lv?.minutes_to_full != null
+            ? t("toFull", { min: Math.round(lv.minutes_to_full) })
+            : lv?.minutes_to_empty != null
+              ? t("toEmpty", { min: Math.round(lv.minutes_to_empty) })
+              : t("steady"),
         ].filter(Boolean),
       };
     }
@@ -434,7 +622,7 @@ export function PlantSchema({
       <svg viewBox={`${vx} ${vy} ${vw} ${vh}`} className="block h-auto w-full" role="group" aria-label={t("label")} data-testid="plant-schema">
         <defs>
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M40 0H0V40" className="fill-none stroke-border/50" strokeWidth={0.75} />
+            <path d="M40 0H0V40" className="fill-none stroke-schema-line/30" strokeWidth={0.75} />
           </pattern>
         </defs>
         <rect x={vx} y={vy} width={vw} height={vh} fill="url(#grid)" />
@@ -444,11 +632,19 @@ export function PlantSchema({
         })}
         <FlowPath geo={geo} plant={plant} />
         {assets.buffers.map((b) => (
-          <BufferTank key={b.code} buf={b} live={buffers[b.code]} onHover={setHover} />
+          <BufferTank
+            key={b.code}
+            buf={b}
+            live={buffers[b.code]}
+            upState={lines[b.from_line]?.state}
+            downState={lines[b.to_line]?.state}
+            onHover={setHover}
+          />
         ))}
         {Object.values(plant.equipment).map((eq) => (
           <EquipmentNode key={eq.code} eq={eq} live={equipment[eq.code]} selected={selected === eq.code} onSelect={onSelect} onHover={setHover} />
         ))}
+        <LossCallouts plant={plant} />
       </svg>
       {tip ? (
         <div
