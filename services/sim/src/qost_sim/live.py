@@ -26,7 +26,7 @@ from pydantic import TypeAdapter
 
 from qost_sim.bus import ResetOutcome, SimBus
 from qost_sim.model import EventFactory, Inject, PlantModel, Rec
-from qost_sim.model.scenarios import check_inject
+from qost_sim.model.scenarios import check_inject, schedule_history_scenarios
 from qost_sim.mqtt_pub import MqttPublisher
 from qost_sim.opcua_server import OpcUaServer
 from qost_sim.settings import SimSettings
@@ -65,13 +65,14 @@ def warm_model(
     clock = cfg.simulation.clock
     demo = demo_start or clock.demo_start
     model = PlantModel(cfg, start=start or clock.backfill_from, seed=seed)
+    schedule_history_scenarios(cfg, model, demo)
     model.run_until_time(demo)
     model.drain()
     if telemetry_period_s is not None:
         model.start_telemetry(telemetry_period_s)
     demo_s = model.sec(demo)
     for scenario in cfg.simulation.scenarios:
-        if scenario.at_min is not None:
+        if scenario.at_min is not None and scenario.at_min >= 0:
             model.schedule(
                 demo_s + scenario.at_min * 60.0, scenario.inject, scenario_id=scenario.id
             )

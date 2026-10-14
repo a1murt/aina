@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from qost_sim.model import EventFactory, PlantModel
+from qost_sim.model.scenarios import schedule_history_scenarios
 from twin_core.config import TwinConfig
 from twin_core.event_sink import EventSink
 
@@ -49,6 +50,7 @@ async def run_backfill(
     period = telemetry_period_s or cfg.simulation.telemetry.backfill_sample_period_s
     began = time.perf_counter()
     model = PlantModel(cfg, start=start, seed=seed, telemetry_period_s=period)
+    schedule_history_scenarios(cfg, model, clock.demo_start)
     factory = EventFactory.deterministic(
         site=cfg.plant.site.code, t0=model.t0, seed=model.seed, nonce=BACKFILL_NONCE
     )

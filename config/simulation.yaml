@@ -144,7 +144,7 @@ scenarios:
   - id: S3-ABB04-WEAR
     name_ru: "Износ робота ABB-04"
     inject: { type: set_state, equipment: ABB-04, degradation: 0.75 }
-    at_min: 0
+    at_min: -90   # износ уже в истории (05:30): ABB-04 > 0,5 с первого PdM-тика ≈ 07:05 (DEMO-5); после смены — DEMO_FRESH=1 make demo
   - id: S4-BAD-CKD-LOT
     name_ru: "Партия комплектующих с дефектами"
     inject: { type: defect_multiplier, areas: [WELD, PAINT, ASSY], factor: 1.6, duration_min: 240 }

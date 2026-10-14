@@ -126,6 +126,7 @@ engine:
   alert_impact_refresh_min: 1    # FR-ENG-06: влияние открытой остановки (AL-S1) пересчитывается каждую заводскую минуту
   dq_live_lost: downtime         # DQ-02 live: журнал vs PDOT+ADOT (downtime) | PBT−APT (literal)
   flow_wip_tolerance: 2          # DQ-04 live: допуск — кузов у заблокированной линии + кузов в работе
+  pdm_tick_min: 5                # §11.1: PdM-тик каждые 5 заводских минут (на демо 60× — раз в 5 с)
 
 data_quality_rules:
   - { id: DQ-01, name_ru: "Загрузка в отчёте не совпадает с часами работы" }

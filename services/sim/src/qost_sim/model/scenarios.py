@@ -9,11 +9,12 @@ filter unit — other telemetry values are derived and cannot be set).
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from qost_sim.model.plant import Inject
+from qost_sim.model.plant import Inject, PlantModel
 from twin_core.config import TwinConfig
 from twin_core.config.simulation import (
     CkdInject,
@@ -96,3 +97,14 @@ def check_configured_scenarios(cfg: TwinConfig) -> list[str]:
     for scenario in cfg.simulation.scenarios:
         problems.extend(f"scenario {scenario.id}: {p}" for p in check_inject(cfg, scenario.inject))
     return problems
+
+
+def schedule_history_scenarios(cfg: TwinConfig, model: PlantModel, demo: datetime) -> None:
+    """Scenarios with a negative ``at_min`` happen inside the history (DEMO-5): the backfill and
+    the live warm-up schedule them identically, so the warm model still equals the backfill's end
+    state. Call before running the model past ``demo + at_min``."""
+    for scenario in cfg.simulation.scenarios:
+        if scenario.at_min is not None and scenario.at_min < 0:
+            at = model.sec(demo) + scenario.at_min * 60.0
+            if at >= model.env.now:
+                model.schedule(at, scenario.inject, scenario_id=scenario.id)

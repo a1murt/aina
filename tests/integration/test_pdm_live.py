@@ -3,15 +3,21 @@
 AL-M1 for ABB-04 (S3) and AL-M2 for BOOTH-02 (S2: "заменить в пересменку 15:00"); the API serves
 them (health, predictions, work order from the alert).
 
-Isolation: database ``<db>_it_m78``, Redis DB 13 (flushed), unique channels and MQTT root.
+Isolation: database ``<db>_it_m78``, Redis DB 13 (flushed; ``TEST_PDM_REDIS_URL`` overrides it),
+unique channels and MQTT root.
+
+DEMO-5: S3 starts inside the history (``at_min`` < 0) and the engine ticks every 5 plant minutes,
+so AL-M1 for ABB-04 is raised by 07:15 plant time (the first ticks after 07:00).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import AsyncIterator, Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +41,7 @@ from twin_core.live import LiveKeys
 
 pytestmark = pytest.mark.integration
 
-REDIS_URL = REDIS_BASE.rsplit("/", 1)[0] + "/13"
+REDIS_URL = os.environ.get("TEST_PDM_REDIS_URL") or REDIS_BASE.rsplit("/", 1)[0] + "/13"
 RESULTS = REPO_ROOT / "var"
 
 
@@ -107,9 +113,11 @@ async def test_s3_and_s2_through_the_engine_and_the_api(
     m1 = await wait_for(
         stack,
         db_url,
-        "SELECT message_ru, value, severity FROM alert "
+        "SELECT ts, message_ru, value, severity FROM alert "
         "WHERE rule_id = 'AL-M1' AND entity = 'ABB-04'",
     )
+    # DEMO-5: on stage the AL-M1 of ABB-04 must be there by 07:15 plant time
+    assert m1[0]["ts"] <= demo_start + timedelta(minutes=15), m1[0]
     await asyncio.sleep(3.0)  # a few more ticks
     await stack.sim("POST", "/pause")
     await asyncio.sleep(1.5)
@@ -121,6 +129,12 @@ async def test_s3_and_s2_through_the_engine_and_the_api(
     )
     abb = [p for p in preds if p["equipment"] == "ABB-04"]
     assert len(abb) >= 3
+    pdm_alerts = await query(
+        db_url,
+        "SELECT ts, rule_id, entity, severity, value->>'p_failure' AS p, message_ru FROM alert "
+        "WHERE rule_id IN ('AL-M1', 'AL-M2') AND ts >= :t ORDER BY ts, entity",
+        t=demo_start,
+    )
     assert {p["equipment"] for p in preds} >= {"ABB-01", "ABB-04", "JIG-01", "OVEN-01", "CONV-03"}
     assert all(p["model_version"] for p in preds)
     assert abb[-1]["top_factors"]
@@ -141,6 +155,7 @@ async def test_s3_and_s2_through_the_engine_and_the_api(
                 "abb04": [[p["ts"].isoformat(), p["p_failure"], p["health_index"]] for p in abb],
                 "am1": m1[0],
                 "am2": m2[0],
+                "pdm_alerts": pdm_alerts,
                 "factors": abb[-1]["top_factors"],
             },
             indent=1,
