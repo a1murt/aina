@@ -56,3 +56,10 @@ class ApiSettings(TwinSettings):
     it ``/api/v1/sim/*`` answers 503."""
     sim_control_timeout_s: float = 35.0
     """Proxy timeout (the reset handshake may wait up to 30 s for the engine)."""
+
+    # ------------------------------------------------------------------ forecast warm-up (S6)
+    forecast_warm: bool = True
+    """``FORECAST_WARM``: with the simulator clock, compute the director's levers and effect when
+    the plant is paused and after a reset, so the first request is answered from the cache."""
+    forecast_warm_settle_s: float = Field(default=10.0, ge=0)
+    """Wall seconds to wait after a reset before warming (the engine rebuilds its state)."""

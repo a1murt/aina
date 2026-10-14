@@ -118,9 +118,16 @@ async def list_downtime(
         )
         params["lines"] = list(cfg.lines)
     if start:
-        where.append("COALESCE(d.end_ts, :now) >= :lo")
+        # an imported stop has no timestamps, only its plant-local day: it overlaps the window
+        # when that day ends after the window starts (not "still open")
+        where.append(
+            "(CASE WHEN d.start_ts IS NULL AND d.shift_date IS NOT NULL"
+            " THEN ((d.shift_date + 1)::timestamp AT TIME ZONE :tz) > :lo"
+            " ELSE COALESCE(d.end_ts, :now) >= :lo END)"
+        )
         params["lo"] = parse_instant(start, cfg)
         params["now"] = now
+        params["tz"] = cfg.plant.site.timezone
     if end:
         where.append("COALESCE(d.start_ts, d.shift_date::timestamptz) < :hi")
         params["hi"] = parse_instant(end, cfg, end=True)

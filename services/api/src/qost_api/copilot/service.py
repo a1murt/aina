@@ -171,17 +171,34 @@ def build_basis(calls: list[CallRecord], cfg: TwinConfig) -> dict[str, Any]:
     }
 
 
+MAX_BASIS_ENTITIES = 6
+
+
+def _ddmm(day: str) -> str:
+    try:
+        return date.fromisoformat(day[:10]).strftime("%d.%m")
+    except ValueError:
+        return day
+
+
 def basis_line(basis: dict[str, Any], lang: str) -> str:
+    """``Основание: период 01.10–16.10; 10.2026; сущности: PAINT-1, ABB-04.``"""
+
     def one(p: dict[str, str]) -> str:
         if "month" in p:
-            return str(p["month"])
+            year, _, month = str(p["month"]).partition("-")
+            return f"{month}.{year}" if month else str(p["month"])
         if "at" in p:
             return "на текущий момент"
-        return p["from"] if p["from"] == p["to"] else f"{p['from']} … {p['to']}"
+        a, b = _ddmm(p["from"]), _ddmm(p["to"])
+        return a if a == b else f"{a}–{b}"
 
     label = BASIS_KK if lang == "kk" else BASIS_RU
-    period = "; ".join(one(p) for p in basis["periods"]) or "—"
-    entities = ", ".join(basis["entities"]) or "завод в целом"
+    period = "; ".join(dict.fromkeys(one(p) for p in basis["periods"])) or "—"
+    names = list(basis["entities"])
+    entities = ", ".join(names[:MAX_BASIS_ENTITIES]) or "завод в целом"
+    if len(names) > MAX_BASIS_ENTITIES:
+        entities += f" и ещё {len(names) - MAX_BASIS_ENTITIES}"
     return f"{label}: период {period}; сущности: {entities}."
 
 

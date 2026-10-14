@@ -16,6 +16,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import text
 
 from qost_api.auth import AnyUser
@@ -141,7 +142,7 @@ async def get_bottleneck(
     if redis is not None:
         try:
             raw = await redis.get(live_keys(request.app.state.settings).key("bottleneck"))
-        except (OSError, ConnectionError):
+        except (OSError, ConnectionError, RedisError):
             raw = None
         if raw:
             import json

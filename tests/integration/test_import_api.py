@@ -265,3 +265,53 @@ def test_roles_and_missing_imports(client: TestClient) -> None:
     response = client.get("/api/v1/import/999", headers=bearer("admin"))
     assert response.status_code == 404
     assert response.json()["type"] == "/problems/not-found"
+
+
+def test_reanalyse_parses_again_and_writes_only_the_audit(client: TestClient, db_url: URL) -> None:
+    created = post(client, CASE_XLSX)
+    assert created.status_code == 201, created.text
+    first = created.json()
+    stored_ms = first["analysis_ms"]
+    assert isinstance(stored_ms, float)
+    assert stored_ms > 0
+    job_id = first["job"]["id"]
+    assert client.get(f"/api/v1/import/{job_id}", headers=DIRECTOR).json()["analysis_ms"] == (
+        stored_ms
+    )
+    # a repeated upload shows the duration of the original analysis, not of the cache hit
+    again = post(client, CASE_XLSX)
+    assert again.status_code == 200
+    assert again.json()["analysis_ms"] == stored_ms
+    assert "reanalysed" not in again.json()
+
+    before = {t: count(db_url, t) for t in DATA_TABLES}
+    files = [("files", (CASE_XLSX.name, CASE_XLSX.read_bytes()))]
+    fresh = client.post("/api/v1/import?reanalyse=true", files=files, headers=DIRECTOR)
+    assert fresh.status_code == 200, fresh.text
+    body = fresh.json()
+    assert body["reanalysed"] is True
+    assert body["analysis_ms"] > 0
+    assert body["job"] == {**first["job"], "created": False}
+    assert fresh.headers["location"] == f"/api/v1/import/{job_id}"
+    assert golden_differences(body) == []
+    assert len(body["data_quality_issues"]) == len(first["data_quality_issues"])
+    assert len(body["alerts"]) == len(first["alerts"])
+    after = {t: count(db_url, t) for t in DATA_TABLES}
+    assert after == {**before, "audit_log": before["audit_log"] + 1}
+    entry = query(
+        db_url, "SELECT action, entity_id, after FROM audit_log ORDER BY id DESC LIMIT 1"
+    )[0]
+    assert (entry["action"], entry["entity_id"]) == ("import.reanalyse", str(job_id))
+    assert entry["after"]["analysis_ms"] == body["analysis_ms"]
+
+    # content never imported: analysed, nothing stored, no job id
+    csv = [("files", (p.name, p.read_bytes())) for p in CASE_CSVS]
+    new = client.post("/api/v1/import?reanalyse=1", files=csv, headers=bearer("admin"))
+    assert new.status_code == 200, new.text
+    assert new.json()["job"]["id"] is None
+    assert new.json()["job"]["kind"] == "csv"
+    assert count(db_url, "import_job") == 1
+    assert count(db_url, "kpi_shift") == before["kpi_shift"]
+
+    denied = client.post("/api/v1/import?reanalyse=true", files=files, headers=bearer("master"))
+    assert denied.status_code == 403

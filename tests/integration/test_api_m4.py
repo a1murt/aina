@@ -17,7 +17,7 @@ import statistics
 import time
 import uuid
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -296,6 +296,8 @@ def test_plan_progress_matches_events(client: TestClient, db: URL, cfg: TwinConf
     assert body["daily"][14]["cum_output"] == body["mtd_output"]  # through 15.10
     start = client.get("/api/v1/plan/progress?month=2026-11", headers=login(client, "quality"))
     assert start.json()["mtd_output"] == 0
+    # line capacity of the month from the configuration (CONS-16, additive field)
+    assert body["ceiling"] == {"qty": 5191, "rate_per_shift": 123.6, "shifts": 42}
 
 
 def test_bottleneck(client: TestClient, imported: dict[str, Any]) -> None:
@@ -565,3 +567,31 @@ def test_ws_over_redis_pubsub(client: TestClient) -> None:
             got = json.loads(ws.receive_text())
         assert got["type"] == "state"
         assert got["data"]["code"] == "CONV-03"
+
+
+def test_downtime_window_skips_imported_stops_of_other_days(
+    client: TestClient, imported: dict[str, Any]
+) -> None:
+    """An imported stop has only its day: a window that starts later must not list it."""
+    director = login(client, "director")
+    every = client.get("/api/v1/downtime?limit=500", headers=director).json()["items"]
+    days = {i["shift_date"] for i in every if i["import_id"] is not None}
+    assert days, "the case import wrote downtime"
+    later = client.get(
+        "/api/v1/downtime?from=2026-10-15&to=2026-10-15&limit=500", headers=director
+    ).json()["items"]
+    assert not [i for i in later if i["import_id"] is not None]
+    day = sorted(days)[0]
+    same = client.get(f"/api/v1/downtime?from={day}&to={day}&limit=500", headers=director)
+    assert [i for i in same.json()["items"] if i["import_id"] is not None]
+
+
+def test_closed_month_output_is_its_total(db: URL, cfg: TwinConfig) -> None:
+    """CONS-22: with the plant clock in November, October is closed — its output is the sum of
+    the daily output, not 0."""
+    later = datetime(2026, 11, 3, 8, 0, tzinfo=UTC)
+    app = create_app(cfg, clock=ManualClock(later), database_url=url_string(db))
+    with TestClient(app) as c:
+        body = c.get("/api/v1/plan/progress?month=2026-10", headers=login(c, "quality")).json()
+    assert body["mtd_output"] > 0
+    assert body["mtd_output"] == body["daily"][-1]["cum_output"]

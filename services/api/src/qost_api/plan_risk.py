@@ -14,6 +14,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI
+from redis.exceptions import RedisError
 from sqlalchemy import case, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -100,6 +101,6 @@ async def record_plan_risk(
                     data=alert_message(row, cfg),
                     counts=await open_alert_counts(session),
                 )
-            except (OSError, ConnectionError) as exc:
+            except (OSError, ConnectionError, RedisError) as exc:
                 log.warning("plan_risk_publish_failed", error=str(exc)[:200])
     return outcome

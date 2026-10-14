@@ -26,6 +26,7 @@ from typing import Any, Protocol
 
 import structlog
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from qost_api.deps import current_clock_state
 from twin_core.clock import Clock, SimClock, format_utc
@@ -182,7 +183,7 @@ class RedisLiveSource:
                         continue
                     data = msg["data"]
                     yield data.decode() if isinstance(data, bytes) else str(data)
-            except (OSError, ConnectionError) as exc:
+            except (OSError, ConnectionError, RedisError) as exc:
                 log.warning("live_subscription_lost", error=str(exc)[:200])
                 await asyncio.sleep(self.retry_s)
             finally:

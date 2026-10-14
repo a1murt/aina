@@ -209,7 +209,7 @@ async def test_tool_loop_cites_the_period_and_entities_and_logs(
     assert not res.refused
     assert [name for name, _ in toolbox_calls] == ["get_kpi", "get_alerts"]
     assert res.answer.startswith("OEE окраски-1 — 81,2 %")
-    assert "Основание: период 2026-10-01 … 2026-10-16" in res.answer
+    assert "Основание: период 01.10–16.10" in res.answer
     assert res.basis["entities"] == ["PAINT-1", "ABB-04"]
     assert [c["name"] for c in res.tool_calls] == ["get_kpi", "get_alerts"]
     # the second request carries both tool results, compacted JSON the model can read
@@ -270,10 +270,12 @@ async def test_tools_depend_on_the_role_and_a_forbidden_call_is_not_run(
         "get_defects",
         "get_alerts",
         "get_forecast",
+        "get_levers",
         "get_equipment_health",
         "get_bottleneck",
     }
     assert {t.name for t in tools_for_role("director")} == names
+    assert "get_levers" not in {t.name for t in tools_for_role("master")}
     assert {t.name for t in tools_for_role("quality")} == {"get_kpi", "get_defects", "get_alerts"}
     assert "get_forecast" not in {t.name for t in tools_for_role("master")}
     provider = FakeProvider(
@@ -347,7 +349,7 @@ async def test_provider_failure_falls_back_to_the_offline_answer(
     assert "LlmTimeoutError" in (res.fallback_reason or "")
     assert toolbox_calls[0][0] == "get_kpi"
     assert "OEE" in res.answer
-    assert "81,23%" in res.answer
+    assert "81,2\u00a0%" in res.answer
 
 
 # --------------------------------------------------------------------------- offline
@@ -364,13 +366,13 @@ async def test_offline_answers_canned_questions_from_the_same_tools(
     assert toolbox_calls[-1][0] == "get_kpi"
     assert toolbox_calls[-1][1]["level"] == "line"
     assert toolbox_calls[-1][1]["code"] == "PAINT-1"
-    assert "OEE 81,23%" in res.answer
+    assert "OEE линии Окраска-1 (с начала месяца) — 81,2\u00a0%" in res.answer
     assert "Основание: период" in res.answer
     assert "PAINT-1" in res.answer
 
     res = await ask(svc, "Какова вероятность отказа ABB-04?", role="maintenance")
     assert toolbox_calls[-1] == ("get_equipment_health", {"code": "ABB-04"})
-    assert "вероятность отказа в ближайшие 8 ч — 83%" in res.answer
+    assert "высокий риск отказа — 83\u00a0% в ближайшие 8 ч" in res.answer
     assert "рост ошибок датчиков" in res.answer
 
     res = await ask(svc, "Какие сейчас открытые оповещения?", role="master")
@@ -397,7 +399,10 @@ def test_offline_entity_and_period_parsing(cfg: TwinConfig) -> None:
     assert e.equipment == ["BOOTH-02"]
     assert e.areas == ["WELD"]
     assert e.lines == ["PAINT-1"]
-    assert find_entities(cfg, "abb-04 и ABB 01").equipment == ["ABB-04"]
+    assert find_entities(cfg, "abb-04 и ABB 01").equipment == ["ABB-04", "ABB-01"]
+    assert find_entities(cfg, "Почему стоит конвейер 3?").equipment == ["CONV-03"]
+    assert not find_entities(cfg, "Риск отказа робота ABB-04?").areas  # «отказ» is not «ОТК»
+    assert find_entities(cfg, "Что с ОТК?").areas == ["QC"]
     from datetime import date
 
     today = date(2026, 10, 16)

@@ -21,6 +21,7 @@ from m3_stack import create_database, drop_database, query, url_string
 from sqlalchemy.engine import URL
 
 from api_support import bearer
+from qost_api.__main__ import main as api_main
 from qost_api.app import create_app
 from qost_engine.replay import run_replay
 from qost_notifier.store import NotificationRow, PgStore
@@ -113,6 +114,52 @@ def test_template_report_from_engine_data(
     after = json.loads(after) if isinstance(after, str) else after
     assert after["by"] == "it-master"
     assert after["generated_by"] == "template"
+
+
+def test_seed_reports_cli_fills_the_last_closed_shifts(
+    history: URL,
+    cfg: TwinConfig,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "none")
+    monkeypatch.setenv("DATABASE_URL", url_string(history))
+    args = ["seed-reports", "--last", "3", "--at", END.isoformat()]
+    assert api_main(args) == 0
+    first = json.loads(capsys.readouterr().out.strip().splitlines()[-1])["reports"]
+    # END is 15.10 00:00 plant time: the last three closed shifts are 13.10 B, 14.10 A, 14.10 B
+    assert [(r["date"], r["shift"]) for r in first] == [
+        ("2026-10-13", "B"),
+        ("2026-10-14", "A"),
+        ("2026-10-14", "B"),
+    ]
+    assert {r["status"] for r in first} <= {"created", "exists"}
+    assert "created" in {r["status"] for r in first}
+    with TestClient(create_app(cfg, clock=ManualClock(END), database_url=url_string(history))) as c:
+        listed = c.get(
+            "/api/v1/reports/shift", params={"date": "2026-10-14", "shift": "B"}, headers=MASTER
+        ).json()
+    assert len(listed) == 1
+    assert listed[0]["generated_by"] == "template"
+    assert listed[0]["numbers_verified"] is True
+
+    # idempotent: a second run finds the reports and writes nothing
+    reports_before = asyncio.run(query(history, "SELECT count(*) AS n FROM report"))[0]["n"]
+    assert api_main(args) == 0
+    second = json.loads(capsys.readouterr().out.strip().splitlines()[-1])["reports"]
+    assert {r["status"] for r in second} == {"exists"}
+    assert asyncio.run(query(history, "SELECT count(*) AS n FROM report"))[0]["n"] == reports_before
+    rows = asyncio.run(
+        query(
+            history,
+            "SELECT user_id, after FROM audit_log WHERE action = 'report.create' "
+            "ORDER BY id DESC LIMIT 1",
+        )
+    )
+    after = rows[0]["after"]
+    after = json.loads(after) if isinstance(after, str) else after
+    assert rows[0]["user_id"] is None
+    assert after["by"] == "system"
 
 
 async def test_notifier_store_round_trip(history: URL, cfg: TwinConfig) -> None:

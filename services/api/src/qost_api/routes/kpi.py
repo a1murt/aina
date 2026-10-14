@@ -7,11 +7,13 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from qost_api.auth import AnyUser
 from qost_api.db import Session
 from qost_api.deps import Config, PlantClock, live_keys, parse_day
 from qost_api.forecast.data import load_targets
+from qost_api.plan_ceiling import line_ceiling
 from qost_api.problems import ProblemError
 from qost_api.queries.kpi import (
     Granularity,
@@ -91,7 +93,7 @@ async def _records(
     if include_live and redis is not None:
         try:
             views = await read_views(redis, live_keys(request.app.state.settings))
-        except (OSError, ConnectionError):  # the live part is best effort
+        except (OSError, ConnectionError, RedisError):  # the live part is best effort
             views = {}
         known = {(r.line, r.day, r.shift) for r in records}
         records += live_line_shifts(views.get("lines") or {}, lines, d0, d1, known)
@@ -169,7 +171,11 @@ async def get_losses(
 
 
 @router.get(
-    "/plan/progress", summary="Target, line plan, output MTD, fulfilment, required rate (§5.8)"
+    "/plan/progress",
+    summary="Target, line plan, output MTD, fulfilment, required rate (§5.8)",
+    description="``ceiling`` (additive): line capacity of the month from the configuration — "
+    "``{qty, rate_per_shift, shifts}``, the cars the slowest flow line can release at its ICT "
+    "over the working shifts of the calendar (≈ 5 191 for 2026-10); ``null`` without a plan.",
 )
 async def get_plan_progress(
     principal: AnyUser,
@@ -182,7 +188,11 @@ async def get_plan_progress(
     current = month_of(cfg, now)
     month = month or current
     as_of = now if month == current else _month_end_or_start(cfg, month, now)
-    mtd = await mtd_output(session, cfg, as_of=as_of) if as_of > _month_start(cfg, month) else 0
+    daily = await daily_output(session, cfg, month, as_of=as_of)
+    if month == current:
+        mtd = await mtd_output(session, cfg, as_of=as_of) if as_of > _month_start(cfg, month) else 0
+    else:  # a closed month: its total (CONS-22; mtd_output would count the next month)
+        mtd = sum(daily.values())
     targets = await load_targets(session, cfg, month)
     rows = await plan_rows(session, month)
     progress = plan_progress(
@@ -193,11 +203,15 @@ async def get_plan_progress(
         plant_target=targets.plant_target,
         line_plan=targets.line_plan,
         line_plan_by_product=line_plan_by_product(cfg, month, rows),
-        daily_output=await daily_output(session, cfg, month, as_of=as_of),
+        daily_output=daily,
     )
     body = plan_progress_json(progress)
     body["targets_source"] = targets.source
     body["output_line"] = cfg.flow_lines[-1]
+    # line capacity of the month (CONS-16): bottleneck ICT x calendar shifts; null without a plan
+    ceiling = line_ceiling(cfg, month)
+    has_plan = targets.plant_target is not None or targets.line_plan is not None
+    body["ceiling"] = ceiling.as_json() if ceiling is not None and has_plan else None
     return body
 
 
