@@ -196,7 +196,7 @@ def test_loss_tree_partitions_pot(
     time, pq, gq, pri = case
     total = sum(parts) or 1.0
     shares_ = [
-        DowntimeShare(time.adot * p / total * 0.99, reason_code=f"R{i}", equipment="EQ")
+        DowntimeShare(time.adot * (p / total) * 0.99, reason_code=f"R{i}", equipment="EQ")
         for i, p in enumerate(parts)
     ]
     tree = line_loss_tree(
