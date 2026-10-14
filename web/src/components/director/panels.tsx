@@ -4,7 +4,7 @@ import type { EChartsOption } from "echarts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, FileText, Loader2, Plus } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { baseOption, EChart, useChartColors } from "@/components/charts/echart";
 import { usePlant } from "@/components/plant-context";
@@ -177,18 +177,42 @@ function wrapWords(text: string, max: number): string {
   return lines.join("\n");
 }
 
-/** Label of a loss item: category · unit or line name · reason. */
+/**
+ * Label of a loss item: category · unit or line name · reason. The function is stable between
+ * renders (chart options list it in their memo deps: a new closure would redraw the chart).
+ */
 export function useLossLabel() {
   const tc = useTranslations("lossCategory");
   const plant = usePlant();
-  return (i: Pick<BottleneckLossItem, "category" | "equipment" | "line" | "reason_code">, sep = " · "): string =>
-    [
-      tc(i.category as "speed"),
-      plant.entityName(i.equipment ?? i.line),
-      i.reason_code ? plant.name(plant.reasons[i.reason_code], i.reason_code) : null,
-    ]
-      .filter(Boolean)
-      .join(sep);
+  return useCallback(
+    (i: Pick<BottleneckLossItem, "category" | "equipment" | "line" | "reason_code">, sep = " · "): string =>
+      [
+        tc(i.category as "speed"),
+        plant.entityName(i.equipment ?? i.line),
+        i.reason_code ? plant.name(plant.reasons[i.reason_code], i.reason_code) : null,
+      ]
+        .filter(Boolean)
+        .join(sep),
+    [tc, plant],
+  );
+}
+
+/**
+ * Pareto x-axis labels: category and unit wrapped at word boundaries (never a word broken in two,
+ * VIS-16); the reason is added as a further line only where two bars would read the same.
+ */
+function paretoAxisLabels(top: BottleneckLossItem[], label: ReturnType<typeof useLossLabel>): string[] {
+  const wrap = (text: string) =>
+    text
+      .split("\n")
+      .map((l) => wrapWords(l, 15))
+      .join("\n");
+  const short = top.map((i) => label({ ...i, reason_code: null }, "\n"));
+  return top.map((i, k) => {
+    const s = short[k] as string;
+    const clash = short.some((o, j) => j !== k && o === s);
+    return wrap(clash && i.reason_code ? label(i, "\n") : s);
+  });
 }
 
 /**
@@ -210,8 +234,7 @@ export function LossesPareto({ items, total }: { items: BottleneckLossItem[]; to
       grid: { left: 8, right: 44, top: 24, bottom: 8, containLabel: true },
       xAxis: {
         type: "category",
-        // category and unit wrapped at word boundaries — never a word broken in two (VIS-16)
-        data: top.map((i) => label({ ...i, reason_code: null }, "\n").split("\n").map((l) => wrapWords(l, 15)).join("\n")),
+        data: paretoAxisLabels(top, label),
         axisLabel: { color: c.fg, fontSize: 10, lineHeight: 13, interval: 0, width: 100, overflow: "truncate", ellipsis: "…" },
         axisTick: { show: false },
         axisLine: { lineStyle: { color: c.border } },
@@ -322,6 +345,14 @@ export function leverMoney(e: LeverResult["effect_kzt"]): { value: number; mean:
   if (e.p50 > 0) return { value: e.p50, mean: false };
   if (e.mean > 0) return { value: e.mean, mean: true };
   return null;
+}
+
+/**
+ * Money effect of a scenario, ₸ per month, of either sign: {@link leverMoney} for a gain, else
+ * the median (a worse scenario shows its loss, a zero effect shows 0).
+ */
+export function scenarioMoney(e: LeverResult["effect_kzt"]): { value: number; mean: boolean } {
+  return leverMoney(e) ?? { value: e.p50 !== 0 ? e.p50 : e.mean < 0 ? e.mean : 0, mean: e.p50 === 0 && e.mean < 0 };
 }
 
 function LeverMoney({ effect }: { effect: LeverResult["effect_kzt"] }) {

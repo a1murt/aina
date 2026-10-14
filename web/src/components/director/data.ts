@@ -69,14 +69,17 @@ export function useLevers() {
   });
 }
 
-/** «С системой» — the economic effect of the default scenario (SPEC §10.5). */
+/**
+ * «С системой» — the economic effect of the default scenario (SPEC §10.5). It is simulated from
+ * the month start with the calibration snapshot, not from the live state, so it is not polled:
+ * the pause / alert / new-timeline invalidations re-read it (no Monte-Carlo run every 30 s
+ * competing with a what-if for the forecast slots).
+ */
 export function useSystemEffect() {
-  const interval = useLiveInterval();
   return useQuery({
     queryKey: ["effect", "system"],
     queryFn: () => api<EffectResult>("/api/v1/effect", { method: "POST", body: {} }),
-    staleTime: 20_000,
-    refetchInterval: interval,
+    staleTime: 300_000,
   });
 }
 
@@ -117,7 +120,14 @@ export function useDirectorFreshness(): void {
     const a = setTimeout(() => void qc.invalidateQueries({ queryKey: ["alerts", "forecast-watch"] }), 1_200);
     return () => clearTimeout(a);
   }, [seq, qc]);
-  const signature = watch.data ? watch.data.items.map((a) => `${a.id}:${a.status}`).join("|") : null;
+  // order-independent: the base forecast re-upserts the day's AL-P1 with a fresh ts, which moves
+  // it in the ts-sorted list — a reorder alone must not start another refetch round
+  const signature = watch.data
+    ? watch.data.items
+        .map((a) => `${a.id}:${a.status}`)
+        .sort()
+        .join("|")
+    : null;
   const seen = useRef<string | null>(null);
   useEffect(() => {
     if (signature === null) return;

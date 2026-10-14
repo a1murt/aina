@@ -65,6 +65,59 @@ function spreadLabels(values: number[], yMin: number, yMax: number): number[] {
   return out;
 }
 
+interface FanPt {
+  x: number;
+  p10: number;
+  p50: number;
+  p90: number;
+}
+
+/** Forecast fan anchored at (forecast time, its MTD), then the end of each remaining day. */
+function fanPoints(f: ForecastResult | null, plan: DirectorPlan, tz: string): FanPt[] | null {
+  if (!f?.fan.length) return null;
+  const monthStart = `${plan.month}-01`;
+  const xMax = plan.daily.length;
+  const x0 = Math.min(xMax, Math.max(0, dayOffset(f.as_of, monthStart, tz)));
+  const pts: FanPt[] = [{ x: x0, p10: f.mtd, p50: f.mtd, p90: f.mtd }];
+  for (const p of f.fan) {
+    const x = dayIndex(p.date, monthStart) + 1;
+    if (x > x0 + 1e-6) pts.push({ x, p10: p.p10, p50: p.p50, p90: p.p90 });
+  }
+  return pts;
+}
+
+const lastOf = (pts: FanPt[] | null): FanPt | null => (pts?.length ? (pts[pts.length - 1] as FanPt) : null);
+
+/**
+ * The y range of {@link PlanChart}: the whole month from 0, or — `zoom` — the end of the month
+ * around the line plan and the P10–P90 ends of the base and scenario fans. Exported so the page
+ * can tell whether a plan line is off the axis.
+ */
+export function planChartYRange(
+  plan: DirectorPlan,
+  forecast: ForecastResult | null,
+  scenario: ForecastResult | null,
+  lineKey: string | null,
+  zoom: boolean,
+  tz: string,
+): { yMin: number; yMax: number } {
+  const baseEnd = lastOf(fanPoints(forecast, plan, tz));
+  const scenEnd = lastOf(fanPoints(scenario, plan, tz));
+  const lineQty = lineKey ? (plan.targets[lineKey]?.qty ?? null) : null;
+  const allTops = [...Object.values(plan.targets).map((x) => x.qty), baseEnd?.p90 ?? 0, scenEnd?.p90 ?? 0, plan.mtd_output];
+  let yMin = 0;
+  let yMax = Math.ceil((Math.max(...allTops) * 1.06) / 500) * 500 || 500;
+  if (zoom) {
+    const lows = [baseEnd?.p10, scenEnd?.p10, lineQty].filter((v): v is number => typeof v === "number");
+    const highs = [baseEnd?.p90, scenEnd?.p90, lineQty].filter((v): v is number => typeof v === "number");
+    if (lows.length) {
+      yMin = Math.max(0, Math.floor((Math.min(...lows) - 250) / 100) * 100);
+      yMax = Math.ceil((Math.max(...highs) + 50) / 50) * 50;
+    }
+  }
+  return { yMin, yMax };
+}
+
 /**
  * Cumulative plan and fact + the forecast fan P10–P90 to the month end (SPEC §13.2 /director).
  * The x axis is continuous plant time (days since the month start): cumulative values sit at the
@@ -109,35 +162,16 @@ export function PlanChart({
     const planPts = (key: string): Pt[] => [[0, 0], ...plan.daily.map((d) => [dayIndex(d.date, monthStart) + 1, d.cum_plan[key] ?? null] as Pt)];
 
     // forecast fans anchored at (forecast time, its MTD)
-    const fanPts = (f: ForecastResult | null) => {
-      if (!f?.fan.length) return null;
-      const x0 = Math.min(xMax, Math.max(0, dayOffset(f.as_of, monthStart, tz)));
-      const pts = [{ x: x0, p10: f.mtd, p50: f.mtd, p90: f.mtd }];
-      for (const p of f.fan) {
-        const x = dayIndex(p.date, monthStart) + 1;
-        if (x > x0 + 1e-6) pts.push({ x, p10: p.p10, p50: p.p50, p90: p.p90 });
-      }
-      return pts;
-    };
-    const base = fanPts(forecast);
-    const scen = fanPts(scenario);
-    const end = (pts: ReturnType<typeof fanPts>) => (pts?.length ? pts[pts.length - 1] : null);
-    const baseEnd = end(base);
-    const scenEnd = end(scen);
+    const base = fanPoints(forecast, plan, tz);
+    const scen = fanPoints(scenario, plan, tz);
+    const baseEnd = lastOf(base);
+    const scenEnd = lastOf(scen);
 
     // y range: whole month from 0, or the end of the month around the line plan
-    const lineQty = lineKey ? (plan.targets[lineKey]?.qty ?? null) : null;
-    const allTops = [...targets.map(([, x]) => x.qty), baseEnd?.p90 ?? 0, scenEnd?.p90 ?? 0, plan.mtd_output];
-    let yMin = 0;
-    let yMax = Math.ceil((Math.max(...allTops) * 1.06) / 500) * 500 || 500;
+    const { yMin, yMax } = planChartYRange(plan, forecast, scenario, lineKey, zoom, tz);
     let xMin = 0;
+    const xInterval = zoom ? 1 : 5;
     if (zoom) {
-      const lows = [baseEnd?.p10, scenEnd?.p10, lineQty].filter((v): v is number => typeof v === "number");
-      const highs = [baseEnd?.p90, scenEnd?.p90, lineQty].filter((v): v is number => typeof v === "number");
-      if (lows.length) {
-        yMin = Math.max(0, Math.floor((Math.min(...lows) - 250) / 100) * 100);
-        yMax = Math.ceil((Math.max(...highs) + 50) / 50) * 50;
-      }
       // start the window a day before the first line (plan or forecast) enters the y range
       const entries = [
         ...(lineKey ? planPts(lineKey) : []),
@@ -188,7 +222,7 @@ export function PlanChart({
       z: 2,
     }));
 
-    const fanSeries = (pts: ReturnType<typeof fanPts>, color: string, prefix: "base" | "scen", label: string, dashed: boolean): LineSeriesOption[] => {
+    const fanSeries = (pts: FanPt[] | null, color: string, prefix: "base" | "scen", label: string, dashed: boolean): LineSeriesOption[] => {
       if (!pts) return [];
       return [
         {
@@ -225,7 +259,7 @@ export function PlanChart({
       ];
     };
 
-    const fanAt = (pts: ReturnType<typeof fanPts>, x: number) => pts?.find((p) => Math.abs(p.x - x) < 1e-6) ?? null;
+    const fanAt = (pts: FanPt[] | null, x: number) => pts?.find((p) => Math.abs(p.x - x) < 1e-6) ?? null;
 
     return {
       ...baseOption(c),
@@ -242,8 +276,17 @@ export function PlanChart({
         type: "value",
         min: xMin,
         max: xMax,
-        interval: zoom ? 1 : 5,
-        axisLabel: { color: c.muted, formatter: (v: number) => (v < xMax ? plant.fmt.dayMonth(dateAt(Math.round(v))) : "") },
+        interval: xInterval,
+        // a tick at x is the end of day x (cumulative values sit there), as in the tooltip; the
+        // month start has no day behind it, and an off-grid month end would crowd the last tick
+        axisLabel: {
+          color: c.muted,
+          formatter: (v: number) => {
+            const x = Math.round(v);
+            if (x <= 0 || (x === xMax && x % xInterval !== 0)) return "";
+            return plant.fmt.dayMonth(dateAt(x - 1));
+          },
+        },
         axisLine: { lineStyle: { color: c.border } },
         splitLine: { show: false },
       },

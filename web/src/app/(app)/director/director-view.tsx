@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { Bell, CircleAlert, FileText, Info, Lightbulb, Loader2, SlidersHorizontal, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
+import { Bell, CircleAlert, FileText, History, Info, Lightbulb, Loader2, SlidersHorizontal, Sparkles, TrendingDown, TrendingUp } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useMemo, useState, type ReactNode } from "react";
 
@@ -23,7 +23,7 @@ import {
 import { ForecastHistogram, HISTOGRAM_HEIGHT } from "@/components/director/histogram";
 import { bottleneckLosses } from "@/components/director/losses";
 import { AreaChart, LastReport, LeversTable, LossesPareto, ShiftsNeededView, Tile, leverMoney, useLeverLabel } from "@/components/director/panels";
-import { PLAN_CHART_HEIGHT, PlanChart, ZoomSwitch } from "@/components/director/plan-chart";
+import { PLAN_CHART_HEIGHT, PlanChart, ZoomSwitch, planChartYRange } from "@/components/director/plan-chart";
 import { mergeOverrides, overridesEmpty, WhatIfPanel } from "@/components/director/what-if";
 import { usePlant } from "@/components/plant-context";
 import { QueryState } from "@/components/query-state";
@@ -32,7 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { ApiError } from "@/lib/api/client";
 import type { EffectResult, ForecastResult, ForecastRunView, LeversResult, Overrides } from "@/lib/api/types";
-import { useLive } from "@/lib/live-store";
+import { useEpochSeq, useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
 
 type Tone = "critical" | "warning" | null;
@@ -148,16 +148,22 @@ export function DirectorView() {
   const [panel, setPanel] = useState(false);
   const [zoom, setZoom] = useState(false);
   const [scenario, setScenario] = useState<Overrides>({});
-  const [outcome, setOutcome] = useState<{ run: ForecastRunView; effect: EffectResult | null } | null>(null);
+  // a what-if result belongs to the plant timeline it was computed on: a demo reset drops it
+  const epochSeq = useEpochSeq();
+  const [stored, setStored] = useState<{ run: ForecastRunView; effect: EffectResult | null; epoch: number; overrides: Overrides } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const run = useMutation({
-    mutationFn: () => runScenario(scenario),
+    mutationFn: async ({ epoch, overrides }: { epoch: number; overrides: Overrides }) => ({ ...(await runScenario(overrides)), epoch, overrides }),
     onSuccess: (o) => {
-      setOutcome(o);
+      setStored(o);
       setError(null);
     },
     onError: (err) => setError(err instanceof ApiError ? `${err.title}: ${err.detail}` : String(err)),
   });
+  const outcome = stored && stored.epoch === epochSeq ? stored : null;
+  const runScenarioNow = () => run.mutate({ epoch: epochSeq, overrides: scenario });
+  // «пересчитать» an outdated result: the scenario that produced it, on the current plant state
+  const rerunShown = () => run.mutate({ epoch: epochSeq, overrides: outcome?.overrides ?? scenario });
 
   const r = base.data?.result ?? null;
   const p = plan.data ?? null;
@@ -183,7 +189,11 @@ export function DirectorView() {
   const bnArea = bn.data?.overall ? (plant.lines[bn.data.overall]?.area ?? null) : null;
   const defectLimit = thr?.defect_rate_limit ?? null;
   const worstDefect = [...areaRows].sort((a, b) => (b.defect_rate ?? 0) - (a.defect_rate ?? 0))[0];
-  const scenRun = outcome?.run.result ?? null;
+  // the base forecast was re-read on a newer plant state than the scenario's own base: the
+  // scenario is kept in the panel, marked outdated, and left off the base charts (M18)
+  const scenAll = outcome?.run.result ?? null;
+  const staleSince = scenAll && r && Date.parse(r.as_of) > Date.parse(scenAll.as_of) ? r.as_of : null;
+  const scenRun = staleSince ? null : scenAll;
   const outputLine = p?.output_line ?? plant.assets?.flow[plant.assets.flow.length - 1] ?? null;
   const bnLosses = useMemo(() => (losses.data ? bottleneckLosses(losses.data, bn.data, outputLine) : null), [losses.data, bn.data, outputLine]);
   const monthLabel = (m: string) => plant.fmt.date(`${m}-01`).slice(3);
@@ -194,6 +204,12 @@ export function DirectorView() {
     setScenario((s) => mergeOverrides(s, overrides));
     setPanel(true);
   };
+
+  // «цель выше оси» only when the zoomed y range really ends below the plant target
+  const targetAboveAxis = useMemo(
+    () => zoom && p != null && targetQty != null && targetQty > planChartYRange(p, r, scenRun, lineKey, true, plant.fmt.tz).yMax,
+    [zoom, p, r, scenRun, lineKey, targetQty, plant.fmt.tz],
+  );
 
   const fulfil = (k: string | null) => (k && p ? (p.targets[k] ?? null) : null);
   const lineFul = fulfil(lineKey);
@@ -224,6 +240,10 @@ export function DirectorView() {
         </div>
       ) : r && p && lineKey ? (
         <Verdict forecast={r} plan={p} lineKey={lineKey} targetKey={targetKey} levers={levers.data} tone={toneOfP(r.p_reach[lineKey])} onApply={applyLever} />
+      ) : (!r && base.error) || (!p && plan.error) ? (
+        <div data-testid="director-verdict-error" className="flex min-h-[62px] items-center rounded-lg border bg-card px-4">
+          <QueryState error={(!r && base.error) || plan.error} compact className="py-0" />
+        </div>
       ) : (
         <div aria-hidden className="h-[62px] animate-pulse rounded-lg border bg-card" />
       )}
@@ -369,6 +389,19 @@ export function DirectorView() {
             actions={
               <>
                 {scenRun ? <Badge tone="info">{t("chart.withScenario")}</Badge> : null}
+                {staleSince ? (
+                  <button
+                    type="button"
+                    onClick={rerunShown}
+                    disabled={run.isPending}
+                    data-testid="scenario-stale"
+                    title={t("whatIf.stale", { time: plant.fmt.time(staleSince), at: plant.fmt.time(scenAll?.as_of ?? null) })}
+                    className="inline-flex items-center gap-1 rounded-md border border-severity-warning/60 px-2 py-0.5 text-xs font-medium whitespace-nowrap hover:bg-accent disabled:opacity-50"
+                  >
+                    {run.isPending ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : <History aria-hidden className="size-3.5 text-severity-warning" />}
+                    {t("chart.scenarioStale")}
+                  </button>
+                ) : null}
                 <ZoomSwitch zoom={zoom} onChange={setZoom} />
               </>
             }
@@ -380,7 +413,7 @@ export function DirectorView() {
             </ChartBox>
             <p className="mt-1 text-xs text-muted-foreground">
               {t("chart.fanNote")}
-              {zoom && targetQty != null ? ` · ${t("chart.zoomNote", { qty: plant.fmt.int(targetQty) })}` : ""}
+              {targetAboveAxis ? ` · ${t("chart.zoomNote", { qty: plant.fmt.int(targetQty) })}` : ""}
             </p>
           </CardBody>
         </Card>
@@ -496,12 +529,13 @@ export function DirectorView() {
             ) : null}
           </CardBody>
         </Card>
-        {hasPlan !== false && targetKey && targetQty != null ? (
+        {/* the card keeps its place while the plan loads (no reflow of the 3-column row) */}
+        {hasPlan === null || (hasPlan && targetKey && targetQty != null) ? (
           <Card>
-            <CardHeader title={t("shifts.title", { qty: plant.fmt.int(targetQty) })} />
+            <CardHeader title={t("shifts.title", { qty: targetQty != null ? plant.fmt.int(targetQty) : "…" })} />
             <CardBody>
-              <QueryState loading={levers.isLoading} error={levers.error} compact />
-              <ShiftsNeededView data={levers.data?.shifts_needed_for_target[targetKey]} qty={targetQty} />
+              <QueryState loading={(hasPlan === null && !plan.error) || levers.isLoading} error={levers.error ?? (hasPlan === null ? plan.error : null)} compact />
+              {targetKey && targetQty != null ? <ShiftsNeededView data={levers.data?.shifts_needed_for_target[targetKey]} qty={targetQty} /> : null}
             </CardBody>
           </Card>
         ) : null}
@@ -526,7 +560,8 @@ export function DirectorView() {
         onClose={() => setPanel(false)}
         value={scenario}
         onChange={setScenario}
-        onRun={() => run.mutate()}
+        onRun={runScenarioNow}
+        onRerun={rerunShown}
         running={run.isPending}
         month={month}
         today={(clock?.shift?.date ?? p?.as_of ?? "").slice(0, 10)}
@@ -535,6 +570,7 @@ export function DirectorView() {
         effect={outcome?.effect ?? null}
         error={error}
         lineKey={lineKey}
+        staleSince={staleSince}
       />
     </div>
   );

@@ -1,10 +1,10 @@
 "use client";
 
-import { Calculator, Loader2, RotateCcw, X } from "lucide-react";
+import { Calculator, History, Loader2, RotateCcw, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { leverMoney } from "@/components/director/panels";
+import { scenarioMoney } from "@/components/director/panels";
 import { usePlant } from "@/components/plant-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -96,6 +96,7 @@ export function WhatIfPanel({
   value,
   onChange,
   onRun,
+  onRerun,
   running,
   month,
   today,
@@ -104,12 +105,15 @@ export function WhatIfPanel({
   effect,
   error,
   lineKey,
+  staleSince = null,
 }: {
   open: boolean;
   onClose: () => void;
   value: Overrides;
   onChange: (o: Overrides) => void;
   onRun: () => void;
+  /** Recompute the shown (outdated) result; defaults to {@link onRun}. */
+  onRerun?: () => void;
   running: boolean;
   month: string;
   today: string;
@@ -119,6 +123,11 @@ export function WhatIfPanel({
   error: string | null;
   /** Target key of the line plan (P shown large in the result). */
   lineKey: string | null;
+  /**
+   * As-of of a newer base forecast when the shown result was computed on an older plant state:
+   * the result is kept, marked as outdated, with a button to recompute it.
+   */
+  staleSince?: string | null;
 }) {
   const t = useTranslations("director.whatIf");
   const plant = usePlant();
@@ -175,13 +184,23 @@ export function WhatIfPanel({
         {result?.result || error ? (
           <div className="border-b bg-muted/40 px-5 py-4">
             {error ? <p className="text-sm text-severity-critical">{error}</p> : null}
+            {result?.result && staleSince ? (
+              <div role="status" data-testid="what-if-stale" className="mb-3 flex items-center gap-2 rounded-md border border-severity-warning/60 bg-card px-3 py-2 text-xs">
+                <History aria-hidden className="size-4 shrink-0 text-severity-warning" />
+                <span className="flex-1">{t("stale", { time: plant.fmt.time(staleSince), at: plant.fmt.time(result.result.as_of) })}</span>
+                <Button variant="outline" size="sm" onClick={onRerun ?? onRun} disabled={running} data-testid="what-if-rerun">
+                  {running ? <Loader2 aria-hidden className="animate-spin" /> : <RotateCcw aria-hidden />}
+                  {t("rerun")}
+                </Button>
+              </div>
+            ) : null}
             {result?.result ? (
-              <>
+              <div className={cn(staleSince && "opacity-60")}>
                 <ResultHero run={result} effect={effect} lineKey={lineKey} />
                 <div className="mt-4 border-t pt-2">
                   <Comparison run={result} effect={effect} compact />
                 </div>
-              </>
+              </div>
             ) : null}
           </div>
         ) : null}
@@ -374,7 +393,7 @@ export function ResultHero({ run, effect, lineKey }: { run: ForecastRunView; eff
   const key = lineKey && lineKey in r.targets ? lineKey : (Object.keys(r.targets)[0] ?? null);
   const base = r.base;
   const delta = r.delta?.paired.p50 ?? (base ? r.summary.p50 - base.summary.p50 : null);
-  const money = effect ? leverMoney(effect.month_kzt) : null;
+  const money = effect ? scenarioMoney(effect.month_kzt) : null;
   const big = "text-[28px] leading-tight font-semibold tracking-tight tabular-nums";
   return (
     <div data-testid="what-if-hero" className="space-y-3">
