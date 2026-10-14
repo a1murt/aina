@@ -410,3 +410,16 @@ async def test_timers_wait_while_the_plant_clock_is_stale(cfg: TwinConfig) -> No
         await task
     finally:
         del type(clock).is_stale  # type: ignore[attr-defined]
+
+
+def test_live_entry_point_propagates_the_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``python -m qost_engine`` exits non-zero when the service stopped on a dead loop, so
+    ``restart: unless-stopped`` brings the container back from its checkpoint."""
+    import qost_engine.__main__ as entry
+    import qost_engine.service as service
+
+    async def failed() -> int:
+        return 1
+
+    monkeypatch.setattr(service, "run_service", failed)
+    assert entry.main(["live"]) == 1

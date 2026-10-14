@@ -753,10 +753,20 @@ class EngineService:
     async def watch(self) -> None:
         """Watchdog: refresh the consumer-group lag (XINFO GROUPS) and stop the process when the
         consumer has stalled (a hung await, STAB-2): the container restarts from the checkpoint."""
+        period = self.settings.engine_watch_s
+        last = time.monotonic()
+        strikes = 0
         while not self.stopping.is_set():
-            await asyncio.sleep(self.settings.engine_watch_s)
+            await asyncio.sleep(period)
+            now = time.monotonic()
+            # a long synchronous step (the loop itself was blocked) is not a stalled consumer
+            blocked, last = now - last > period + 5.0, now
             await self._refresh_group_lag()
-            if self._consume_stalled(self.settings.engine_consume_exit_s):
+            if blocked or not self._consume_stalled(self.settings.engine_consume_exit_s):
+                strikes = 0
+                continue
+            strikes += 1
+            if strikes >= 3:
                 log.error("consume_stalled", age_s=round(self.consume_age_s() or 0.0, 1))
                 self._fail()
                 return
