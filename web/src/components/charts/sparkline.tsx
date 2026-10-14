@@ -3,6 +3,7 @@
 import type { EChartsOption } from "echarts";
 
 import { baseOption, EChart, useChartColors } from "@/components/charts/echart";
+import { usePlant } from "@/components/plant-context";
 import type { SignalSpec } from "@/lib/api/types";
 
 /** Telemetry sparkline with warning and limit lines (ISA-101: amber warning, red limit). */
@@ -18,6 +19,7 @@ export function Sparkline({
   label: string;
 }) {
   const c = useChartColors();
+  const { fmt } = usePlant();
   if (!c) return <div style={{ height }} />;
   const marks: Array<{ yAxis: number; lineStyle: { color: string; type: "dashed" | "solid"; width: number } }> = [];
   for (const v of [spec.warn_lo, spec.warn_hi]) if (v != null) marks.push({ yAxis: v, lineStyle: { color: c.warning, type: "dashed", width: 1 } });
@@ -33,7 +35,7 @@ export function Sparkline({
     grid: { left: 2, right: 2, top: 4, bottom: 4 },
     xAxis: { type: "time", show: false },
     yAxis: { type: "value", show: false, min: lo - pad, max: hi + pad },
-    tooltip: { ...(baseOption(c).tooltip as object), trigger: "axis", valueFormatter: (v) => `${typeof v === "number" ? v.toFixed(2) : v} ${spec.unit}` },
+    tooltip: { ...(baseOption(c).tooltip as object), trigger: "axis", valueFormatter: (v) => (typeof v === "number" ? `${fmt.num(v, 2)}${spec.unit ? `\u00a0${spec.unit}` : ""}` : String(v ?? "")) },
     series: [
       {
         type: "line",

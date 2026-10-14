@@ -372,7 +372,12 @@ export interface TimelineView {
 // ------------------------------------------------------------------ import (FR-IMP-05)
 
 export interface ImportReport {
-  job: { id: number; filename: string; kind: string; status: string; created_ts: string; created: boolean };
+  /** `created` is sent by POST only (false: the same file was imported before, stored result). */
+  job: { id: number; filename: string; kind: string; status: string; created_ts: string; created?: boolean; analysis_ms?: number | null };
+  /** Duration of the original analysis, ms (contract (a); absent in older API builds). */
+  analysis_ms?: number | null;
+  /** true for POST /import?reanalyse=true: parsed again, nothing written. */
+  reanalysed?: boolean;
   meta: {
     kind: string;
     files: string[];

@@ -3,7 +3,10 @@
 import type { EChartsOption } from "echarts";
 
 import { baseOption, EChart, useChartColors } from "@/components/charts/echart";
+import { usePlant } from "@/components/plant-context";
 import type { LimitForecast, SignalSpec } from "@/lib/api/types";
+
+const NBSP = "\u00a0";
 
 /**
  * Telemetry of one signal with warning (amber, dashed) and limit (red) lines and, when the
@@ -27,7 +30,9 @@ export function SignalChart({
   labels: { value: string; warn: string; limit: string; projection: string };
 }) {
   const c = useChartColors();
+  const { fmt } = usePlant();
   if (!c) return <div style={{ height }} />;
+  const digits = Math.abs(spec.hi - spec.lo) <= 20 ? 1 : 0;
   const marks: Array<{ yAxis: number; name: string; lineStyle: { color: string; type: "dashed" | "solid"; width: number } }> = [];
   for (const v of [spec.warn_lo, spec.warn_hi])
     if (v != null) marks.push({ yAxis: v, name: labels.warn, lineStyle: { color: c.warning, type: "dashed", width: 1.25 } });
@@ -48,7 +53,7 @@ export function SignalChart({
   const option: EChartsOption = {
     ...baseOption(c),
     animation: false,
-    grid: { left: 48, right: 16, top: 16, bottom: 28 },
+    grid: { left: 52, right: 16, top: spec.unit ? 26 : 16, bottom: 28 },
     xAxis: {
       type: "time",
       axisLine: { lineStyle: { color: c.border } },
@@ -59,13 +64,15 @@ export function SignalChart({
       type: "value",
       min: Math.floor(lo - pad),
       max: Math.ceil(hi + pad),
-      axisLabel: { color: c.muted },
+      name: spec.unit || undefined,
+      nameTextStyle: { color: c.muted, align: "right", padding: [0, 6, 0, 0] },
+      axisLabel: { color: c.muted, formatter: (v: number) => fmt.num(v, digits), showMinLabel: false, showMaxLabel: false },
       splitLine: { lineStyle: { color: c.border, opacity: 0.5 } },
     },
     tooltip: {
       ...(baseOption(c).tooltip as object),
       trigger: "axis",
-      valueFormatter: (v) => `${typeof v === "number" ? v.toFixed(2) : v} ${spec.unit}`,
+      valueFormatter: (v) => (typeof v === "number" ? `${fmt.num(v, 2)}${spec.unit ? NBSP + spec.unit : ""}` : String(v ?? "")),
     },
     series: [
       {
@@ -77,7 +84,16 @@ export function SignalChart({
         markLine: {
           silent: true,
           symbol: "none",
-          label: { show: true, position: "insideEndTop", color: c.muted, fontSize: 10, formatter: (p) => `${(p as { name?: string }).name ?? ""}` },
+          label: {
+            show: true,
+            position: "insideEndTop",
+            color: c.muted,
+            fontSize: 10,
+            formatter: (p) => {
+              const m = p as { name?: string; value?: number };
+              return `${m.name ?? ""}${typeof m.value === "number" ? ` ${fmt.num(m.value, digits)}` : ""}`;
+            },
+          },
           data: marks,
         },
         markArea: window
@@ -105,6 +121,7 @@ export function SignalChart({
 /** p_failure history (0..1) as a small area line. */
 export function ProbabilitySpark({ points, height = 48, label }: { points: Array<[number, number]>; height?: number; label: string }) {
   const c = useChartColors();
+  const { fmt } = usePlant();
   if (!c) return <div style={{ height }} />;
   const option: EChartsOption = {
     ...baseOption(c),
@@ -112,7 +129,15 @@ export function ProbabilitySpark({ points, height = 48, label }: { points: Array
     grid: { left: 2, right: 2, top: 4, bottom: 4 },
     xAxis: { type: "time", show: false },
     yAxis: { type: "value", show: false, min: 0, max: 1 },
-    tooltip: { ...(baseOption(c).tooltip as object), trigger: "axis", valueFormatter: (v) => `${typeof v === "number" ? Math.round(v * 100) : v} %` },
+    tooltip: {
+      ...(baseOption(c).tooltip as object),
+      trigger: "axis",
+      axisPointer: { type: "line" },
+      formatter: (ps) => {
+        const p = (Array.isArray(ps) ? ps[0] : ps) as { value?: [number, number] } | undefined;
+        return p?.value ? `${fmt.dateShort(p.value[0])}<br/><b>${fmt.pct(p.value[1], 0)}</b>` : "";
+      },
+    },
     series: [
       {
         type: "line",

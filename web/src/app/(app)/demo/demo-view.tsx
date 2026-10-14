@@ -11,10 +11,11 @@ import { QueryState } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { api, ApiError } from "@/lib/api/client";
+import { api } from "@/lib/api/client";
+import { useErrorMessage } from "@/lib/api/errors";
 import type { SimScenario, SimStatus } from "@/lib/api/types";
+import { useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
-
 
 /** /demo — demo console (admin, profile demo): sim status, speed, scenarios S1–S5, reset (§13.2). */
 export function DemoView() {
@@ -22,6 +23,8 @@ export function DemoView() {
   const locale = useLocale();
   const plant = usePlant();
   const qc = useQueryClient();
+  const describe = useErrorMessage();
+  const liveShift = useLive((st) => st.clock?.shift ?? null);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const status = useQuery({ queryKey: ["sim", "status"], queryFn: () => api<SimStatus>("/api/v1/sim/status"), refetchInterval: 3_000 });
@@ -32,9 +35,11 @@ export function DemoView() {
       setNote({ ok: true, text: v.label });
       void qc.invalidateQueries({ queryKey: ["sim"] });
     },
-    onError: (err) => setNote({ ok: false, text: err instanceof ApiError ? `${err.title}: ${err.detail}` : String(err) }),
+    onError: (err) => setNote({ ok: false, text: describe(err).text }),
   });
   const s = status.data;
+  const shift = s?.shift ?? liveShift;
+  const stateText = (state: string) => (t.has(`simState.${state}` as "simState.running") ? t(`simState.${state}` as "simState.running") : state);
   const applied = new Map((s?.scenarios ?? []).map((x) => [x.scenario_id, x]));
   // no terminal link: the terminal is the operator's screen and refuses admin (FE-10)
   const screens = [
@@ -65,13 +70,13 @@ export function DemoView() {
                 <dt className="text-muted-foreground">{t("state")}</dt>
                 <dd>
                   <Badge tone={s.state === "running" && !s.paused ? "outline" : "warning"}>
-                    {s.paused ? t("paused") : s.state === "running" ? t("running") : s.state}
+                    {s.paused ? t("paused") : stateText(s.state)}
                   </Badge>
                 </dd>
                 <dt className="text-muted-foreground">{t("plantTime")}</dt>
                 <dd className="tabular-nums">{plant.fmt.dateTime(s.plant_time)}</dd>
                 <dt className="text-muted-foreground">{t("shift")}</dt>
-                <dd>{s.shift ? `${plant.fmt.date(s.shift.date)} · ${s.shift.code}` : "—"}</dd>
+                <dd>{shift?.date && shift.code ? t("shiftValue", { date: plant.fmt.date(shift.date), code: shift.code }) : "—"}</dd>
                 <dt className="text-muted-foreground">{t("speed")}</dt>
                 <dd className="font-semibold tabular-nums">×{s.speed}</dd>
                 <dt className="text-muted-foreground">{t("demoStart")}</dt>
@@ -81,7 +86,7 @@ export function DemoView() {
                   {s.seed} · {t("epoch", { n: s.epoch })}
                 </dd>
                 <dt className="text-muted-foreground">{t("lastReset")}</dt>
-                <dd className="tabular-nums">{s.last_reset ? plant.fmt.dateTime(s.last_reset) : "—"}</dd>
+                <dd className="tabular-nums">{s.last_reset && !Number.isNaN(Date.parse(s.last_reset)) ? plant.fmt.dateTime(s.last_reset) : "—"}</dd>
               </dl>
             ) : null}
             <div className="mt-4">

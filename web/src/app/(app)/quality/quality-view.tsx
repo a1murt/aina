@@ -13,9 +13,25 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { api } from "@/lib/api/client";
+import { useClosedShifts, type KpiShiftRow } from "@/lib/api/shifts";
+import { useRole } from "@/lib/api/use-role";
 import type { CorrelationsView, ParetoView, SpcArea, SpcView } from "@/lib/api/types";
 import { useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
+
+/** Roles of GET /api/v1/bodies/{id} (routes/bodies.py). */
+const BODY_ROLES = ["quality", "master"];
+
+/** SPC / KPI shift key «2026-10-14/B» → «14.10 · смена B». */
+function useShiftKey() {
+  const t = useTranslations("quality");
+  const { fmt } = usePlant();
+  return (key: string) => {
+    const [date, code] = key.split("/");
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return key;
+    return code ? t("shiftKey", { date: fmt.dayMonth(date), shift: code }) : fmt.dayMonth(date);
+  };
+}
 
 interface BodyTrace {
   body_id: string;
@@ -30,6 +46,8 @@ interface BodyTrace {
 /** /quality — p-charts, Pareto, FPY / RTY, correlations, body trace (SPEC §11.3, §13.2). */
 export function QualityView() {
   const t = useTranslations("quality");
+  const plant = usePlant();
+  const role = useRole() ?? "";
   const spc = useQuery({ queryKey: ["quality", "spc"], queryFn: () => api<SpcView>("/api/v1/quality/spc"), refetchInterval: 60_000 });
   const pareto = useQuery({ queryKey: ["quality", "pareto"], queryFn: () => api<ParetoView>("/api/v1/quality/pareto"), refetchInterval: 60_000 });
   const corr = useQuery({ queryKey: ["quality", "corr"], queryFn: () => api<CorrelationsView>("/api/v1/quality/correlations"), refetchInterval: 120_000 });
@@ -74,7 +92,7 @@ export function QualityView() {
                     {c.insight ? <TriangleAlert aria-hidden className="size-4 text-severity-warning" /> : <CheckCircle2 aria-hidden className="size-4 text-muted-foreground" />}
                     {c.name_ru}
                   </span>
-                  <Badge tone={c.insight ? "warning" : "neutral"}>ρ = {c.rho.toFixed(2)}</Badge>
+                  <Badge tone={c.insight ? "warning" : "neutral"}>ρ = {plant.fmt.num(c.rho, 2).replace("-", "\u2212")}</Badge>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">{c.text_ru}</p>
               </div>
@@ -82,32 +100,42 @@ export function QualityView() {
           </CardBody>
         </Card>
       </div>
-      <BodySearch />
+      {BODY_ROLES.includes(role) ? <BodySearch /> : null}
     </div>
   );
+}
+
+function lastRow(rows: KpiShiftRow[] | undefined, code?: string): KpiShiftRow | null {
+  const list = (rows ?? []).filter((r) => (code ? r.code === code : true) && r.final !== false && r.fpy != null);
+  return list.length ? list[list.length - 1]! : null;
 }
 
 function FpyStrip() {
   const t = useTranslations("quality");
   const plant = usePlant();
+  const shiftKey = useShiftKey();
   const areas = useLive((s) => s.areas);
   const rty = useLive((s) => s.plant?.rty ?? null);
   const list = (plant.assets?.areas ?? []).filter((a) => a.kind === "production" && a.lines.length);
+  const needArea = list.some((a) => areas[a.code]?.fpy == null);
+  const areaKpi = useClosedShifts("area", needArea);
+  const plantKpi = useClosedShifts("plant", rty == null);
+  const tile = (key: string, label: string, live: number | null, last: KpiShiftRow | null, value: (r: KpiShiftRow) => number | null | undefined, strong = false) => {
+    const fallback = live == null && last ? last : null;
+    return (
+      <div key={key} className={cn("rounded-lg border px-3 py-2", strong ? "border-primary/40 bg-primary/5" : "bg-card")} data-testid={`fpy-${key}`}>
+        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className="text-2xl font-semibold tabular-nums">{plant.fmt.pct(live ?? (fallback ? (value(fallback) ?? null) : null), 1)}</div>
+        <div className="text-[11px] text-muted-foreground">
+          {fallback ? t("lastShift", { shift: shiftKey(`${fallback.date}/${fallback.shift ?? ""}`) }) : live != null ? t("currentShift") : "\u00a0"}
+        </div>
+      </div>
+    );
+  };
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6" data-testid="fpy-strip">
-      {list.map((a) => {
-        const fpy = areas[a.code]?.fpy ?? null;
-        return (
-          <div key={a.code} className="rounded-lg border bg-card px-3 py-2">
-            <div className="text-xs text-muted-foreground">{t("fpy", { area: plant.name(a) })}</div>
-            <div className="text-2xl font-semibold tabular-nums">{plant.fmt.pct(fpy, 1)}</div>
-          </div>
-        );
-      })}
-      <div className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
-        <div className="text-xs text-muted-foreground">{t("rty")}</div>
-        <div className="text-2xl font-semibold tabular-nums">{plant.fmt.pct(rty, 1)}</div>
-      </div>
+      {list.map((a) => tile(a.code, t("fpy", { area: plant.name(a) }), areas[a.code]?.fpy ?? null, lastRow(areaKpi.data?.items, a.code), (r) => r.fpy))}
+      {tile("rty", t("rty"), rty, lastRow(plantKpi.data?.items), (r) => r.rty ?? null, true)}
     </div>
   );
 }
@@ -115,6 +143,7 @@ function FpyStrip() {
 function PChart({ area }: { area: SpcArea }) {
   const t = useTranslations("quality");
   const plant = usePlant();
+  const shiftKey = useShiftKey();
   const c = useChartColors();
   const bad = new Set(area.violations.flatMap((v) => v.keys));
   const over = area.points.some((p) => p.p > p.ucl);
@@ -137,14 +166,19 @@ function PChart({ area }: { area: SpcArea }) {
   if (!c) return <div style={{ height: 240 }}>{header}</div>;
   const x = area.points.map((p) => `${plant.fmt.dayMonth(p.date)} ${p.shift}`);
   const pct = (v: number) => +(v * 100).toFixed(2);
+  const pctText = (v: unknown) => (typeof v === "number" ? plant.fmt.pct(v / 100, 2) : "");
   const option: EChartsOption = {
     ...baseOption(c),
     animation: false,
     grid: { left: 40, right: 12, top: 18, bottom: 40 },
     legend: { bottom: 0, textStyle: { color: c.muted, fontSize: 11 }, itemHeight: 8 },
     xAxis: { type: "category", data: x, axisLabel: { color: c.muted, fontSize: 10, hideOverlap: true }, axisLine: { lineStyle: { color: c.border } } },
-    yAxis: { type: "value", axisLabel: { color: c.muted, formatter: "{value} %" }, splitLine: { lineStyle: { color: c.border, opacity: 0.5 } } },
-    tooltip: { ...(baseOption(c).tooltip as object), trigger: "axis", valueFormatter: (v) => `${v} %` },
+    yAxis: {
+      type: "value",
+      axisLabel: { color: c.muted, formatter: (v: number) => plant.fmt.axisPct(v / 100) },
+      splitLine: { lineStyle: { color: c.border, opacity: 0.5 } },
+    },
+    tooltip: { ...(baseOption(c).tooltip as object), trigger: "axis", valueFormatter: pctText },
     series: [
       {
         name: t("p"),
@@ -155,21 +189,54 @@ function PChart({ area }: { area: SpcArea }) {
           symbolSize: bad.has(p.key) || p.p > p.ucl ? 9 : 5,
         })),
         lineStyle: { color: c.fg, width: 1.5 },
+        itemStyle: { color: c.fg },
         symbol: "circle",
         markLine: {
           silent: true,
           symbol: "none",
           data: [
             ...(area.p_bar != null
-              ? [{ yAxis: pct(area.p_bar), name: t("center"), lineStyle: { color: c.info, type: "solid" as const, width: 1.25 } }]
+              ? [
+                  {
+                    yAxis: pct(area.p_bar),
+                    name: t("center"),
+                    lineStyle: { color: c.info, type: "solid" as const, width: 1.25 },
+                    // centre and norm are often close: their labels sit at opposite ends
+                    label: { position: "insideStartTop" as const },
+                  },
+                ]
               : []),
             { yAxis: pct(area.norm), name: t("norm"), lineStyle: { color: c.normal, type: "dotted" as const, width: 1.5 } },
           ],
-          label: { color: c.muted, fontSize: 10, position: "insideEndTop", formatter: (p) => `${(p as { name?: string }).name ?? ""}` },
+          label: {
+            color: c.muted,
+            fontSize: 10,
+            position: "insideEndTop",
+            formatter: (p) => {
+              const m = p as { name?: string; value?: number };
+              return `${m.name ?? ""} ${typeof m.value === "number" ? plant.fmt.pct(m.value / 100, 1) : ""}`;
+            },
+          },
         },
       },
-      { name: "UCL", type: "line", step: "middle", data: area.points.map((p) => pct(p.ucl)), showSymbol: false, lineStyle: { color: c.alarm, width: 1, type: "dashed" } },
-      { name: "LCL", type: "line", step: "middle", data: area.points.map((p) => pct(p.lcl)), showSymbol: false, lineStyle: { color: c.alarm, width: 1, type: "dashed", opacity: 0.6 } },
+      {
+        name: t("ucl"),
+        type: "line",
+        step: "middle",
+        data: area.points.map((p) => pct(p.ucl)),
+        showSymbol: false,
+        lineStyle: { color: c.alarm, width: 1, type: "dashed" },
+        itemStyle: { color: c.alarm },
+      },
+      {
+        name: t("lcl"),
+        type: "line",
+        step: "middle",
+        data: area.points.map((p) => pct(p.lcl)),
+        showSymbol: false,
+        lineStyle: { color: c.alarm, width: 1, type: "dashed", opacity: 0.6 },
+        itemStyle: { color: c.alarm, opacity: 0.6 },
+      },
     ],
   };
   return (
@@ -182,7 +249,7 @@ function PChart({ area }: { area: SpcArea }) {
             <li key={`${v.rule}-${v.end_key}`} className="flex items-start gap-1.5">
               <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0 text-severity-warning" />
               <span>
-                {t("rule", { rule: String(v.rule) })}: {v.text_ru} ({v.end_key})
+                {t("rule", { rule: String(v.rule) })}: {v.text_ru} ({shiftKey(v.end_key)})
               </span>
             </li>
           ))}
@@ -194,6 +261,7 @@ function PChart({ area }: { area: SpcArea }) {
 
 function Pareto({ data }: { data: ParetoView }) {
   const t = useTranslations("quality");
+  const { fmt } = usePlant();
   const c = useChartColors();
   if (!c) return <div style={{ height: 300 }} />;
   const items = data.items.slice(0, 12);
@@ -210,14 +278,16 @@ function Pareto({ data }: { data: ParetoView }) {
       axisLine: { lineStyle: { color: c.border } },
     },
     yAxis: [
-      { type: "value", axisLabel: { color: c.muted }, splitLine: { lineStyle: { color: c.border, opacity: 0.5 } } },
-      { type: "value", min: 0, max: 100, axisLabel: { color: c.muted, formatter: "{value} %" }, splitLine: { show: false } },
+      { type: "value", axisLabel: { color: c.muted, formatter: (v: number) => fmt.int(v) }, splitLine: { lineStyle: { color: c.border, opacity: 0.5 } } },
+      { type: "value", min: 0, max: 100, axisLabel: { color: c.muted, formatter: (v: number) => fmt.axisPct(v / 100) }, splitLine: { show: false } },
     ],
     series: [
       {
         name: t("qty"),
         type: "bar",
         data: items.map((i) => ({ value: i.qty, itemStyle: { color: vital.has(i.defect_code) ? c.warning : c.idle } })),
+        itemStyle: { color: c.warning },
+        tooltip: { valueFormatter: (v) => (typeof v === "number" ? fmt.int(v) : "") },
         barMaxWidth: 28,
       },
       {
@@ -225,6 +295,7 @@ function Pareto({ data }: { data: ParetoView }) {
         type: "line",
         yAxisIndex: 1,
         data: items.map((i) => +(i.cumulative * 100).toFixed(1)),
+        tooltip: { valueFormatter: (v) => (typeof v === "number" ? fmt.pct(v / 100, 1) : "") },
         lineStyle: { color: c.fg, width: 1.5 },
         itemStyle: { color: c.fg },
         markLine: { silent: true, symbol: "none", data: [{ yAxis: 80 }], lineStyle: { color: c.muted, type: "dashed" }, label: { show: false } },
@@ -235,7 +306,7 @@ function Pareto({ data }: { data: ParetoView }) {
     <div>
       <EChart option={option} height={300} ariaLabel={t("paretoTitle")} />
       <p className="text-xs text-muted-foreground">
-        {t("vitalFew", { codes: items.filter((i) => vital.has(i.defect_code)).map((i) => `${i.defect_code} (${i.name_ru ?? ""})`).join(", "), total: data.total })}
+        {t("vitalFew", { codes: items.filter((i) => vital.has(i.defect_code)).map((i) => `${i.defect_code} (${i.name_ru ?? ""})`).join(", "), total: fmt.int(data.total) })}
       </p>
     </div>
   );
@@ -243,7 +314,14 @@ function Pareto({ data }: { data: ParetoView }) {
 
 function BodySearch() {
   const t = useTranslations("quality");
+  const tb = useTranslations("quality.body");
   const plant = usePlant();
+  // enums of routes/bodies.py through the message book; an unknown value is shown as is
+  const en = (group: "status" | "result" | "disposition", v: string) => (tb.has(`${group}.${v}` as "status.finished") ? tb(`${group}.${v}` as "status.finished") : v);
+  const defectName = (code: string | null, fallback: string | null) => {
+    const d = plant.defects.find((x) => x.code === code);
+    return d ? plant.name(d) : (fallback ?? "");
+  };
   const [input, setInput] = useState("");
   const [id, setId] = useState<string | null>(null);
   const body = useQuery({
@@ -280,13 +358,13 @@ function BodySearch() {
           <div className="grid gap-4 md:grid-cols-2" data-testid="body-trace">
             <div>
               <p className="mb-2 text-sm">
-                <b>{b.body_id}</b> · {b.product ?? "—"} · <Badge tone={b.defects.length ? "warning" : "neutral"}>{b.status}</Badge>
+                <b>{b.body_id}</b> · {b.product ?? "—"} · <Badge tone={b.defects.length ? "warning" : "neutral"}>{en("status", b.status)}</Badge>
               </p>
               <ol className="relative space-y-1.5 border-l pl-4 text-sm">
                 {b.events.map((e) => (
                   <li key={`${e.ts}-${e.line}`}>
-                    <span className="tabular-nums text-muted-foreground">{plant.fmt.dateTime(e.ts)}</span> · <b>{e.line}</b> {e.line_name_ru ?? ""} —{" "}
-                    <span className={cn(e.defect_code && "font-medium text-severity-warning")}>{e.result}</span>
+                    <span className="tabular-nums text-muted-foreground">{plant.fmt.dateTime(e.ts)}</span> · <b>{e.line}</b> {plant.name(plant.lines[e.line], e.line_name_ru ?? "")} —{" "}
+                    <span className={cn(e.defect_code && "font-medium text-severity-warning")}>{en("result", e.result)}</span>
                     {e.defect_code ? ` (${e.defect_code})` : ""}
                   </li>
                 ))}
@@ -299,7 +377,7 @@ function BodySearch() {
                 {b.defects.map((d) => (
                   <li key={d.id} className="flex items-center gap-2">
                     <TriangleAlert aria-hidden className="size-4 text-severity-warning" />
-                    <b>{d.defect_code}</b> {d.defect_name_ru ?? ""} · {d.area} · {d.disposition}
+                    <b>{d.defect_code}</b> {defectName(d.defect_code, d.defect_name_ru)} · {plant.entityName(d.area)} · {en("disposition", d.disposition)}
                   </li>
                 ))}
               </ul>

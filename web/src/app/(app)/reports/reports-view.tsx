@@ -6,14 +6,18 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 
 import { usePlant } from "@/components/plant-context";
-import { QueryState } from "@/components/query-state";
+import { ErrorDetails, QueryState } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { api, ApiError } from "@/lib/api/client";
+import { api } from "@/lib/api/client";
+import { useErrorMessage } from "@/lib/api/errors";
+import { useClosedShifts } from "@/lib/api/shifts";
 import type { ReportView } from "@/lib/api/types";
-import { useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
+
+/** How many closed shifts the picker offers (the report is built after the engine closes a shift). */
+const PICK_SHIFTS = 6;
 
 /** /reports — shift reports (FR-LLM, SPEC §11.4): generate, list, «цифры проверены», print. */
 export function ReportsView() {
@@ -21,15 +25,20 @@ export function ReportsView() {
   const plant = usePlant();
   const locale = useLocale();
   const qc = useQueryClient();
-  const shift = useLive((s) => s.clock?.shift ?? null);
+  const describe = useErrorMessage();
   const shifts = plant.assets?.calendar.shifts ?? [];
-  const [day, setDay] = useState<string | null>(null);
-  const [code, setCode] = useState<string | null>(null);
-  // Default: the last shift of the previous day — the report is built after the engine closes a shift.
-  const prev = shift?.date ? new Date(Date.parse(`${shift.date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10) : "";
-  const date = day ?? prev;
-  const sh = code ?? shifts[shifts.length - 1]?.code ?? "";
+  // The last closed shifts are the shifts with final KPI rows of the past week (no live tail).
+  const closed = useClosedShifts("plant");
+  const options = (closed.data?.items ?? [])
+    .filter((r) => r.shift && r.final !== false)
+    .map((r) => `${r.date}/${r.shift}`)
+    .reverse()
+    .slice(0, PICK_SHIFTS);
+  const [picked, setPicked] = useState<string | null>(null);
+  const key = picked && options.includes(picked) ? picked : (options[0] ?? "");
+  const [date = "", sh = ""] = key.split("/");
   const lang = locale === "kk" ? "kk" : "ru";
+  const shiftSpec = (c: string) => shifts.find((s) => s.code === c);
 
   const list = useQuery({
     queryKey: ["reports", date, sh, lang],
@@ -48,17 +57,24 @@ export function ReportsView() {
         <h1 className="text-xl font-semibold">{t("title")}</h1>
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col text-xs text-muted-foreground">
-            {t("date")}
-            <input type="date" value={date} onChange={(e) => setDay(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground" />
-          </label>
-          <label className="flex flex-col text-xs text-muted-foreground">
-            {t("shift")}
-            <select value={sh} onChange={(e) => setCode(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
-              {shifts.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {plant.name(s, s.code)} ({s.start}–{s.end})
-                </option>
-              ))}
+            {t("pick")}
+            <select
+              value={key}
+              onChange={(e) => setPicked(e.target.value)}
+              disabled={!options.length}
+              className="h-9 min-w-56 rounded-md border bg-background px-2 text-sm text-foreground"
+              data-testid="report-shift"
+            >
+              {options.length ? null : <option value="">{!closed.data && !closed.error ? "…" : t("noClosed")}</option>}
+              {options.map((o) => {
+                const [d = "", c = ""] = o.split("/");
+                const spec = shiftSpec(c);
+                return (
+                  <option key={o} value={o}>
+                    {t("pickOption", { date: plant.fmt.date(d), shift: c, start: spec?.start ?? "", end: spec?.end ?? "" })}
+                  </option>
+                );
+              })}
             </select>
           </label>
           <Button onClick={() => gen.mutate()} disabled={gen.isPending || !date || !sh} data-testid="report-generate">
@@ -72,9 +88,10 @@ export function ReportsView() {
         </div>
       </div>
       {gen.error ? (
-        <p role="status" className="rounded-md border border-severity-critical/50 bg-severity-critical/10 px-3 py-2 text-sm text-severity-critical print:hidden">
-          {gen.error instanceof ApiError ? gen.error.detail || gen.error.title : String(gen.error)}
-        </p>
+        <div role="status" className="rounded-md border border-severity-critical/50 bg-severity-critical/10 px-3 py-2 text-sm print:hidden">
+          <p className="text-severity-critical">{describe(gen.error).text}</p>
+          <ErrorDetails detail={describe(gen.error).detail} className="text-muted-foreground" />
+        </div>
       ) : null}
       <QueryState loading={list.isLoading} error={list.error} compact />
       {list.data && reports.length === 0 ? <p className="text-sm text-muted-foreground print:hidden">{t("empty")}</p> : null}
@@ -83,7 +100,10 @@ export function ReportsView() {
           <CardHeader
             title={t("heading", { date: plant.fmt.date(r.shift_date), shift: r.shift_code })}
             icon={<FileText aria-hidden className="size-4" />}
-            subtitle={t("meta", { ts: plant.fmt.dateTime(r.created_ts), by: r.generated_by, model: r.model ?? "—" })}
+            subtitle={t("meta", {
+              ts: plant.fmt.dateTime(r.created_ts),
+              source: r.generated_by === "llm" && r.model ? t("byModel", { model: r.model }) : t("byTemplate"),
+            })}
             actions={
               <div className="flex gap-1.5">
                 {r.numbers_verified ? (
