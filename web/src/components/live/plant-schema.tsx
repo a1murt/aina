@@ -6,7 +6,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type React
 
 import { usePlant, type Plant } from "@/components/plant-context";
 import { equipmentIcon, storageIcon } from "@/components/live/icons";
-import { useStopImpacts } from "@/components/live/stop-impact";
+import { impactOf, useStopImpacts } from "@/components/live/stop-impact";
 import { fitText, textWidth } from "@/components/live/text-fit";
 import type { AreaAsset, BufferAsset, BufferLive, EquipmentAsset, EquipmentLive, LineLive, StateCode, UnitEvent } from "@/lib/api/types";
 import { onUnit, useLive } from "@/lib/live-store";
@@ -510,33 +510,62 @@ function AreaBlock({
   );
 }
 
+const CALLOUT_H = 18;
+const CALLOUT_GAP = 4;
+
+type Box = { x: number; y: number; w: number; h: number };
+
+const overlaps = (a: Box, b: Box): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
 /**
- * Red callout under a unit in an unplanned stop: the output lost so far, as estimated by the
- * engine for its AL-S1 alert (S14, VIS-1d) — not recomputed here.
+ * Where a loss callout of width `w` goes for the unit at `pos`: under the node, or above it when
+ * the space under it is taken by another node (the schema is dense in ОТК and on the assembly
+ * conveyors); under it again when both are taken.
+ */
+function calloutTop(code: string, pos: { x: number; y: number }, w: number, nodes: [string, { x: number; y: number }][]): number {
+  const below = pos.y + NODE_H / 2 + CALLOUT_GAP;
+  const above = pos.y - NODE_H / 2 - CALLOUT_GAP - CALLOUT_H;
+  const free = (top: number) =>
+    !nodes.some(([other, p]) => other !== code && overlaps({ x: pos.x - w / 2, y: top, w, h: CALLOUT_H }, { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2, w: NODE_W, h: NODE_H }));
+  if (free(below)) return below;
+  return free(above) ? above : below;
+}
+
+/**
+ * Red callout next to a unit in an unplanned stop: the output lost so far, as estimated by the
+ * engine for its AL-S1 alert (S14, VIS-1d) — not recomputed here. Only for the open stop the
+ * alert belongs to (same rule as the incident list), so an older alert never shows a stale loss.
  */
 function LossCallouts({ plant }: { plant: Plant }) {
   const t = useTranslations("live");
   const impacts = useStopImpacts();
+  const downtimeOpen = useLive((s) => s.downtimeOpen);
   const down = useLive((s) =>
     Object.values(s.equipment)
       .filter((e) => e.state === "DOWN_UNPLANNED")
       .map((e) => e.code)
       .join(","),
   );
+  const nodes = useMemo(
+    () =>
+      Object.values(plant.equipment).flatMap((e): [string, { x: number; y: number }][] => (e.layout ? [[e.code, e.layout]] : [])),
+    [plant.equipment],
+  );
   const codes = down ? down.split(",") : [];
   return (
     <g aria-hidden>
       {codes.map((code) => {
         const pos = plant.equipment[code]?.layout;
-        const hit = impacts[code];
+        const stop = downtimeOpen[code];
+        const hit = stop ? impactOf(impacts, stop) : undefined;
         if (!pos || !hit || hit.lostUnits <= 0) return null;
         const label = t("lossChip", { units: plant.fmt.num(hit.lostUnits, 1) });
         const w = textWidth(label, 11.5, 600) + 16;
-        const top = pos.y + NODE_H / 2 + 6;
+        const top = calloutTop(code, pos, w, nodes);
         return (
           <g key={code} data-testid={`loss-callout-${code}`}>
-            <rect x={pos.x - w / 2} y={top} width={w} height={20} rx={10} className="fill-card stroke-isa-alarm" strokeWidth={1.5} />
-            <text x={pos.x} y={top + 14} textAnchor="middle" className="fill-severity-critical text-[11.5px] font-semibold tabular-nums">
+            <rect x={pos.x - w / 2} y={top} width={w} height={CALLOUT_H} rx={CALLOUT_H / 2} className="fill-card stroke-isa-alarm" strokeWidth={1.5} />
+            <text x={pos.x} y={top + 13} textAnchor="middle" className="fill-severity-critical text-[11.5px] font-semibold tabular-nums">
               {label}
             </text>
           </g>

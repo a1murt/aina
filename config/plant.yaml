@@ -122,7 +122,7 @@ areas:
         rework: { stations: 1, minutes_median: 10 }
         equipment:
           - { code: CONV-01, name_ru: "Конвейер-01 (обивка)",       type: conveyor, criticality: A, degraded_capacity: 0.0, aliases: ["Конвейер-01"], layout: { x: 990, y: 190 } }
-          - { code: CONV-02, name_ru: "Конвейер-02 (шасси)",        type: conveyor, criticality: A, degraded_capacity: 0.0, aliases: ["Конвейер-02"], layout: { x: 1075, y: 260 } }
+          - { code: CONV-02, name_ru: "Конвейер-02 (шасси)",        type: conveyor, criticality: A, degraded_capacity: 0.0, aliases: ["Конвейер-02"], layout: { x: 1070, y: 272 } }
           - { code: CONV-03, name_ru: "Конвейер-03 (финальная)",    type: conveyor, criticality: A, degraded_capacity: 0.0, aliases: ["Конвейер-03"], layout: { x: 1175, y: 345 } }
   - code: QC
     kind: production
@@ -139,8 +139,8 @@ areas:
         rework: { stations: 1, minutes_median: 12 }
         equipment:
           - { code: TEST-01,  name_ru: "Стенд развал-схождение", type: test_stand, criticality: A, degraded_capacity: 0.0, layout: { x: 1370, y: 205 } }
-          - { code: TEST-02,  name_ru: "Тормозной стенд",        type: test_stand, criticality: A, degraded_capacity: 0.0, layout: { x: 1440, y: 268 } }
-          - { code: WATER-01, name_ru: "Камера дождевания",      type: test_stand, criticality: C, degraded_capacity: 1.0, layout: { x: 1370, y: 330 } }
+          - { code: TEST-02,  name_ru: "Тормозной стенд",        type: test_stand, criticality: A, degraded_capacity: 0.0, layout: { x: 1440, y: 286 } }
+          - { code: WATER-01, name_ru: "Камера дождевания",      type: test_stand, criticality: C, degraded_capacity: 1.0, layout: { x: 1370, y: 348 } }
   - code: FG
     kind: storage
     name_ru: "Склад готовой продукции"

@@ -42,7 +42,7 @@ export function SimNotRunningBanner() {
     >
       <PowerOff aria-hidden className="size-4 shrink-0" />
       <span className="font-semibold">{t("notRunning")}</span>
-      <span className="text-muted-foreground">{t("notRunningHint")}</span>
+      <span className="text-muted-foreground">{t("notRunningHint", { min: IDLE_GRACE_MIN })}</span>
     </div>
   );
 }

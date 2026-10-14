@@ -174,4 +174,42 @@ async function percentages(page: Page, selector: string): Promise<number[]> {
     await expect(page.getByTestId("plant-clock")).toHaveAttribute("data-stale", "1", { timeout: 15_000 });
     await expect(page.getByTestId("plant-clock")).toContainText("нет данных");
   });
+
+  test("«Симулятор не запущен» when a shift runs and every line is out of plan (VIS-21)", async ({ page }) => {
+    type Shift = { date: string; code: string; elapsed_min?: number };
+    // the state right after a demo reset, before «Старт»: the clock says a shift is on (well past
+    // the grace minutes), every line has been IDLE_NO_PLAN for 10 plant minutes, no line deltas
+    const inShift = (shift: Shift | null | undefined, plantTime: string): Shift => ({
+      ...(shift ?? { date: plantTime.slice(0, 10), code: "1" }),
+      elapsed_min: 30,
+    });
+    await page.routeWebSocket(/\/ws\/live/, (ws) => {
+      const server = ws.connectToServer();
+      server.onMessage((m) => {
+        let msg: { type?: string; data?: Record<string, unknown> };
+        try {
+          msg = JSON.parse(String(m)) as typeof msg;
+        } catch {
+          return;
+        }
+        const d = msg.data;
+        if (msg.type === "snapshot" && d && Array.isArray(d.lines)) {
+          const clock = (d.clock ?? { plant_time: new Date().toISOString(), speed: 1 }) as { plant_time: string; shift?: Shift | null };
+          const since = new Date(Date.parse(clock.plant_time) - 10 * 60_000).toISOString();
+          d.clock = { ...clock, mode: "sim", shift: inShift(clock.shift, clock.plant_time) };
+          d.lines = (d.lines as Record<string, unknown>[]).map((l) => ({ ...l, state: "IDLE_NO_PLAN", since }));
+          ws.send(JSON.stringify(msg));
+        } else if (msg.type === "clock" && d && d.event === "tick" && typeof d.plant_time === "string") {
+          ws.send(JSON.stringify({ ...msg, data: { ...d, mode: "sim", shift: inShift(d.shift as Shift | null, d.plant_time) } }));
+        }
+        // line state, KPI and alert deltas are dropped: the plant stays as the snapshot says
+      });
+    });
+    await login(page, "master");
+    await page.goto("/live");
+    const banner = page.getByTestId("sim-not-running");
+    await expect(banner).toBeVisible({ timeout: 15_000 });
+    await expect(banner).toContainText("Симулятор не запущен");
+    await expect(banner).toContainText(/дольше \d+ мин/);
+  });
 });

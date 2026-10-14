@@ -36,14 +36,12 @@ export function DemoView() {
   });
   const s = status.data;
   const applied = new Map((s?.scenarios ?? []).map((x) => [x.scenario_id, x]));
-  // terminal of the line that carries the model plan (plant.yaml), else the first line
-  const terminalLine = plant.assets?.plan.find((p) => p.line)?.line ?? plant.assets?.flow[0] ?? "";
+  // no terminal link: the terminal is the operator's screen and refuses admin (FE-10)
   const screens = [
     { href: "/import", key: "import" },
     { href: "/director", key: "director" },
     { href: "/live", key: "live" },
     { href: "/live?tv=1", key: "tv" },
-    { href: `/operator/${terminalLine}`, key: "operator" },
   ] as const;
 
   return (
