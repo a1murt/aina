@@ -1,36 +1,72 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck } from "lucide-react";
+import { Bell, Check, CheckCheck, FileSpreadsheet } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 
-import { usePlant } from "@/components/plant-context";
+import { usePlant, type Plant } from "@/components/plant-context";
+import { invalidateQueries } from "@/components/providers";
 import { QueryState } from "@/components/query-state";
 import { SeverityIcon } from "@/components/state-badge";
 import { api } from "@/lib/api/client";
 import type { AlertsPage, AlertView } from "@/lib/api/types";
-import { useLive } from "@/lib/live-store";
+import { plantNow, useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
 
+// ------------------------------------------------------------------ one refresh per alert message
+
 /**
- * Open alerts (REST), refreshed after every `alert` WS message. The engine publishes the message
- * when it decides, and its writer commits the row a moment later — so the list is re-read with
- * a short delay (and once more), plus a slow poll as a safety net.
+ * The engine publishes an `alert` message when it decides and commits the row on its next commit
+ * (about a second later), so the lists are re-read once after a short delay. One watcher serves
+ * the whole tab, however many lists are mounted (VIS-19): a burst of messages → one refresh.
  */
-export function useOpenAlerts(limit = 50) {
-  const qc = useQueryClient();
-  const seq = useLive((s) => s.alertSeq);
+const ALERT_REFRESH_DELAY_MS = 1_600;
+let watchers = 0;
+let unsubscribe: (() => void) | null = null;
+let pending: ReturnType<typeof setTimeout> | null = null;
+const followers = new Set<() => void>();
+
+function watchAlerts(): () => void {
+  if (watchers++ === 0) {
+    unsubscribe = useLive.subscribe((s, prev) => {
+      if (s.alertSeq === prev.alertSeq || pending) return;
+      pending = setTimeout(() => {
+        pending = null;
+        void invalidateQueries({ queryKey: ["alerts"] });
+        for (const fn of followers) fn();
+      }, ALERT_REFRESH_DELAY_MS);
+    });
+  }
+  return () => {
+    if (--watchers > 0) return;
+    unsubscribe?.();
+    unsubscribe = null;
+    if (pending) clearTimeout(pending);
+    pending = null;
+  };
+}
+
+/** Run `fn` together with the alert-list refresh (e.g. predictions next to AL-M1 on /maintenance). */
+export function useAlertsRefresh(fn: () => void): void {
+  const ref = useRef(fn);
   useEffect(() => {
-    if (seq === 0) return;
-    const refresh = () => void qc.invalidateQueries({ queryKey: ["alerts"] });
-    const a = setTimeout(refresh, 800);
-    const b = setTimeout(refresh, 3_000);
+    ref.current = fn;
+  });
+  useEffect(() => {
+    const call = () => ref.current();
+    followers.add(call);
+    const stop = watchAlerts();
     return () => {
-      clearTimeout(a);
-      clearTimeout(b);
+      followers.delete(call);
+      stop();
     };
-  }, [seq, qc]);
+  }, []);
+}
+
+/** Open alerts (REST), re-read once per `alert` WS message burst, plus a slow poll as a safety net. */
+export function useOpenAlerts(limit = 50) {
+  useEffect(() => watchAlerts(), []);
   return useQuery({
     queryKey: ["alerts", "open", limit],
     queryFn: () => api<AlertsPage>("/api/v1/alerts", { query: { status: "open", limit } }),
@@ -55,13 +91,43 @@ export function alertTexts(a: AlertView, locale: string): { title: string; messa
   };
 }
 
-export function AlertRow({ alert, dense = false }: { alert: AlertView; dense?: boolean }) {
+const DATE_IN_TEXT = /(\d{2})\.(\d{2})\.(\d{4})/;
+const dayKey = (s: string): number | null => {
+  const m = DATE_IN_TEXT.exec(s);
+  return m ? Number(`${m[3]}${m[2]}${m[1]}`) : null;
+};
+
+/**
+ * An alert about an earlier day than the moment it was raised comes from an imported file (the
+ * case data): the importer raises findings «now» about the days in the file, the engine raises
+ * them when the shift or day closes. The day is the first dd.MM.yyyy of the server text.
+ */
+export function isImportedAlert(a: AlertView, plant: Plant): boolean {
+  const about = dayKey(a.message_ru);
+  const raised = dayKey(plant.fmt.date(a.ts));
+  return about != null && raised != null && about < raised;
+}
+
+/** Plant calendar day now («16.10»), or null before the first clock; changes once a day. */
+function usePlantDay(): string | null {
+  const { fmt } = usePlant();
+  return useLive((s) => {
+    const now = plantNow(s.clock);
+    return now == null ? null : fmt.dayMonth(now);
+  });
+}
+
+export function AlertRow({ alert, dense = false, today }: { alert: AlertView; dense?: boolean; today?: string | null }) {
   const t = useTranslations("alerts");
   const locale = useLocale();
-  const { fmt } = usePlant();
+  const plant = usePlant();
+  const { fmt } = plant;
   const ack = useAckAlert();
+  const [expanded, setExpanded] = useState(false);
   const { title, message } = alertTexts(alert, locale);
   const acked = alert.status === "ack" || Boolean(alert.ack_ts);
+  const sameDay = today != null && fmt.dayMonth(alert.ts) === today;
+  const imported = isImportedAlert(alert, plant);
   return (
     <li
       data-testid="alert-row"
@@ -74,11 +140,31 @@ export function AlertRow({ alert, dense = false }: { alert: AlertView; dense?: b
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <p className="truncate text-sm font-medium">{title}</p>
-          <time className="shrink-0 text-xs text-muted-foreground tabular-nums">{fmt.time(alert.ts)}</time>
+          <time dateTime={alert.ts} title={fmt.dateTime(alert.ts)} className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {sameDay ? fmt.time(alert.ts) : fmt.dateShort(alert.ts)}
+          </time>
         </div>
-        <p className={cn("text-xs text-muted-foreground", dense && "line-clamp-2")}>{message}</p>
+        {dense ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? undefined : t("expand")}
+            className={cn("w-full text-left text-xs text-muted-foreground", !expanded && "line-clamp-3")}
+          >
+            {message}
+          </button>
+        ) : (
+          <p className="text-xs text-muted-foreground">{message}</p>
+        )}
         <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
           <code>{alert.rule_id}</code>
+          {imported ? (
+            <span className="inline-flex items-center gap-1" data-testid="alert-imported">
+              <FileSpreadsheet aria-hidden className="size-3" />
+              {t("imported")}
+            </span>
+          ) : null}
           {alert.escalation_level > 0 ? <span>{t("escalation", { level: alert.escalation_level })}</span> : null}
           {acked ? (
             <span className="inline-flex items-center gap-1">
@@ -107,6 +193,7 @@ export function AlertRow({ alert, dense = false }: { alert: AlertView; dense?: b
 export function AlertsFeed({ limit = 8, className }: { limit?: number; className?: string }) {
   const t = useTranslations("alerts");
   const q = useOpenAlerts();
+  const today = usePlantDay();
   const order = { critical: 0, warning: 1, info: 2 } as const;
   const items = [...(q.data?.items ?? [])]
     .sort((a, b) => order[a.severity] - order[b.severity] || b.ts.localeCompare(a.ts))
@@ -115,7 +202,7 @@ export function AlertsFeed({ limit = 8, className }: { limit?: number; className
     <div className={className}>
       <QueryState loading={q.isLoading} error={q.error} compact className="px-3" />
       {q.data && items.length === 0 ? <p className="px-3 py-4 text-sm text-muted-foreground">{t("none")}</p> : null}
-      <ul data-testid="alerts-feed">{items.map((a) => <AlertRow key={a.id} alert={a} dense />)}</ul>
+      <ul data-testid="alerts-feed">{items.map((a) => <AlertRow key={a.id} alert={a} dense today={today} />)}</ul>
     </div>
   );
 }

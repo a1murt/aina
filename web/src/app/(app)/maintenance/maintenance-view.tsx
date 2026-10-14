@@ -15,9 +15,9 @@ import {
   Wrench,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { alertTexts, useOpenAlerts } from "@/components/alerts";
+import { alertTexts, useAlertsRefresh, useOpenAlerts } from "@/components/alerts";
 import { ProbabilitySpark, SignalChart } from "@/components/maintenance/charts";
 import { usePlant } from "@/components/plant-context";
 import { QueryState } from "@/components/query-state";
@@ -26,13 +26,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { api, ApiError, getClaims } from "@/lib/api/client";
+import { useErrorMessage } from "@/lib/api/errors";
+import type { Fmt } from "@/lib/format";
 import type { AlertView, HealthFull, LimitForecast, Page, PredictionView, TelemetryView, WorkOrderStatus, WorkOrderView } from "@/lib/api/types";
 import { useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
 
 const PDM_RULES = ["AL-M1", "AL-M2"];
+// Same role sets as the API (routes/work_orders.py, routes/predictions.py).
 const WO_ROLES = ["maintenance", "master", "admin"];
-const WO_WRITE_ROLES = ["maintenance", "admin"];
+const WO_WRITE_ROLES = WO_ROLES;
 const PRED_ROLES = ["maintenance", "director", "admin"];
 const COLUMNS: WorkOrderStatus[] = ["open", "in_progress", "done"];
 
@@ -45,8 +48,12 @@ function useWorkOrders(enabled: boolean) {
   });
 }
 
-function errText(err: unknown): string {
-  return err instanceof ApiError ? err.detail || err.title : String(err);
+/** Failure probability: «> 99 %» / «< 1 %» at the ends instead of an overconfident «100 %» (VIS-20). */
+export function pFailure(fmt: Fmt, p: number | null | undefined): string {
+  if (p == null || !Number.isFinite(p)) return fmt.pct(null);
+  if (p > 0.99) return `>\u00a0${fmt.pct(0.99, 0)}`;
+  if (p > 0 && p < 0.01) return `<\u00a0${fmt.pct(0.01, 0)}`;
+  return fmt.pct(p, 0);
 }
 
 /** /maintenance — PdM, limit forecasts and work orders (SPEC §13.2, US-5, US-6). */
@@ -60,6 +67,7 @@ export function MaintenanceView() {
   const canWo = WO_ROLES.includes(role);
   const canWrite = WO_WRITE_ROLES.includes(role);
   const qc = useQueryClient();
+  const describe = useErrorMessage();
   const [selected, setSelected] = useState<string | null>(null);
   const [note, setNote] = useState<{ tone: "ok" | "warn" | "err"; text: string } | null>(null);
 
@@ -71,6 +79,20 @@ export function MaintenanceView() {
   });
   const alerts = useOpenAlerts(100);
   const orders = useWorkOrders(canWo);
+
+  // The table, the card and AL-M1/AL-M2 must show the same risk (DEMO-7): an alert message re-reads
+  // predictions and health with the alert list, and a new prediction tick re-reads the alerts.
+  useAlertsRefresh(() => {
+    void qc.invalidateQueries({ queryKey: ["predictions"] });
+    void qc.invalidateQueries({ queryKey: ["health"] });
+  });
+  const predStamp = useMemo(
+    () => (predictions.data?.items ?? []).reduce((m, p) => (p.ts > m ? p.ts : m), ""),
+    [predictions.data],
+  );
+  useEffect(() => {
+    if (predStamp) void qc.invalidateQueries({ queryKey: ["alerts"] });
+  }, [predStamp, qc]);
 
   const pdmAlerts = useMemo(
     () => (alerts.data?.items ?? []).filter((a) => PDM_RULES.includes(a.rule_id) && a.status !== "resolved"),
@@ -102,7 +124,15 @@ export function MaintenanceView() {
     return list;
   }, [plant.equipment, predByEq, alertByEq, live]);
 
-  const current = selected ?? rows[0]?.e.code ?? null;
+  // The card keeps the unit it opened with: the first row once the rankings are known, then only a
+  // click changes it — re-sorting on every refetch must not switch the card by itself (FE-18).
+  const ranked = Boolean(alerts.data) && (!canPred || Boolean(predictions.data) || Boolean(predictions.error));
+  const first = ranked ? (rows[0]?.e.code ?? null) : null;
+  useEffect(() => {
+    if (selected === null && first) setSelected(first);
+  }, [selected, first]);
+  const current = selected;
+  const horizon = predictions.data?.items[0]?.horizon_h ?? null;
 
   const fromAlert = useMutation({
     mutationFn: (alert: AlertView) => api<WorkOrderView>("/api/v1/work-orders", { method: "POST", body: { alert_id: alert.id } }),
@@ -110,7 +140,7 @@ export function MaintenanceView() {
       setNote({ tone: "ok", text: t("woCreated", { id: wo.id, code: wo.equipment }) });
       void qc.invalidateQueries({ queryKey: ["work-orders"] });
     },
-    onError: (err) => setNote({ tone: err instanceof ApiError && err.status === 409 ? "warn" : "err", text: err instanceof ApiError && err.status === 409 ? t("woExists") : errText(err) }),
+    onError: (err) => setNote({ tone: err instanceof ApiError && err.status === 409 ? "warn" : "err", text: err instanceof ApiError && err.status === 409 ? t("woExists") : describe(err).text }),
   });
 
   return (
@@ -173,12 +203,7 @@ export function MaintenanceView() {
                         <CalendarClock aria-hidden className="size-4" />
                         {v.window ? t("window", { time: plant.fmt.time(v.window) }) : t("serviceNow")}
                       </span>
-                      {v.hours_to_limit != null ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-1">
-                          <Gauge aria-hidden className="size-4" />
-                          {t("toLimit", { h: plant.fmt.num(v.hours_to_limit, 1) })}
-                        </span>
-                      ) : null}
+                      <LimitNow code={a.entity} signal={v.signal ?? null} fallback={v.hours_to_limit ?? null} />
                       {(v.saving_min ?? 0) > 0 ? (
                         <span className="inline-flex items-center gap-1.5 rounded-md bg-isa-normal/12 px-2 py-1 font-medium">
                           <CheckCircle2 aria-hidden className="size-4" />
@@ -221,7 +246,9 @@ export function MaintenanceView() {
                   <th className="px-2 py-2 font-medium">{t("col.class")}</th>
                   <th className="px-2 py-2 font-medium">{t("col.state")}</th>
                   <th className="px-2 py-2 text-right font-medium">{t("col.health")}</th>
-                  <th className="px-2 py-2 text-right font-medium">{t("col.p")}</th>
+                  <th className="px-2 py-2 text-right font-medium" title={t("col.pTitle")}>
+                    {horizon != null ? t("col.p", { h: horizon }) : t("col.pShort")}
+                  </th>
                   <th className="px-2 py-2 font-medium">{t("col.factor")}</th>
                   <th className="px-4 py-2 text-right font-medium">{t("col.orders")}</th>
                 </tr>
@@ -258,10 +285,12 @@ export function MaintenanceView() {
                       <HealthBar value={hi} />
                     </td>
                     <td className={cn("px-2 py-2 text-right font-semibold tabular-nums", sev === "critical" && "text-severity-critical")}>
-                      {p ? plant.fmt.pct(p.p_failure, 0) : "—"}
+                      {p ? pFailure(plant.fmt, p.p_failure) : "—"}
                     </td>
                     <td className="max-w-[260px] px-2 py-2 text-xs text-muted-foreground">
-                      <span className="line-clamp-2">{p?.factors[0] ?? "—"}</span>
+                      <span className="line-clamp-2" title={p?.factors[0]}>
+                        {p?.factors[0] ?? "—"}
+                      </span>
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums">{ordersByEq[e.code] ?? 0}</td>
                   </tr>
@@ -275,6 +304,29 @@ export function MaintenanceView() {
 
       {canWo ? <Kanban orders={orders.data?.items ?? []} loading={orders.isLoading} error={orders.error} canWrite={canWrite} onNote={setNote} /> : null}
     </div>
+  );
+}
+
+/**
+ * Live hours to the limit of an AL-M2 signal from the current health forecast (the alert text keeps
+ * the estimate of the moment it was raised); the alert's own value until the forecast arrives.
+ */
+function LimitNow({ code, signal, fallback }: { code: string; signal: string | null; fallback: number | null }) {
+  const t = useTranslations("maintenance");
+  const { fmt } = usePlant();
+  const health = useQuery({
+    queryKey: ["health", code, "full"],
+    queryFn: () => api<HealthFull>(`/api/v1/equipment/${code}/health`),
+    refetchInterval: 15_000,
+  });
+  const lf = health.data?.limits.find((l) => l.signal === signal) ?? (signal ? null : (health.data?.limits[0] ?? null));
+  const hours = lf ? lf.hours_to_limit : fallback;
+  if (hours == null) return null;
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2 py-1 font-medium" data-testid={`limit-now-${code}`}>
+      <Gauge aria-hidden className="size-4" />
+      {lf?.limit_at ? t("toLimitAt", { h: fmt.num(hours, 1), time: fmt.time(lf.limit_at) }) : t("toLimit", { h: fmt.num(hours, 1) })}
+    </span>
   );
 }
 
@@ -337,8 +389,8 @@ function EquipmentCard({ code, canPred }: { code: string; canPred: boolean }) {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Kpi label={t("health")} value={h.health_index != null ? plant.fmt.int(h.health_index) : "—"} />
             <Kpi
-              label={t("p", { h: pred?.horizon_h ?? 8 })}
-              value={pred ? plant.fmt.pct(pred.p_failure, 0) : "—"}
+              label={pred ? t("p", { h: pred.horizon_h }) : t("pNone")}
+              value={pred ? pFailure(plant.fmt, pred.p_failure) : "—"}
               tone={pred && pred.p_failure >= 0.5 ? "critical" : undefined}
             />
             <Kpi label={t("mtbf")} value={plant.fmt.num(h.reliability_30d?.mtbf_h ?? null, 0)} />
@@ -434,11 +486,12 @@ function Kanban({
   const t = useTranslations("maintenance");
   const plant = usePlant();
   const qc = useQueryClient();
+  const describe = useErrorMessage();
   const move = useMutation({
     mutationFn: ({ id, status }: { id: number; status: WorkOrderStatus }) =>
       api<WorkOrderView>(`/api/v1/work-orders/${id}`, { method: "PATCH", body: { status } }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["work-orders"] }),
-    onError: (err) => onNote({ tone: "err", text: errText(err) }),
+    onError: (err) => onNote({ tone: "err", text: describe(err).text }),
   });
   return (
     <Card data-testid="work-orders">
