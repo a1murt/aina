@@ -121,6 +121,7 @@ engine:
   alert_debounce_s: 300          # AL-B1/L1: условие держится 5 мин, прежде чем поднять/снять оповещение
   bottleneck_rate_shifts: 5      # FR-ENG-06: темп узкого места = средний выпуск за 5 закрытых смен
   live_oee_min_elapsed_min: 120  # AL-O1/O2 по текущей смене — только после 2 ч (прогноз)
+  live_kpi_min_apt_min: 30       # live E/OEE текущей смены = null, пока APT линии < 30 мин (кузова прошлой смены дают E > 100 %)
   s1_resolve_microstops: true    # AL-S1 класса A — сразу; закрыть, если остановка оказалась микроостановкой
   alert_impact_refresh_min: 1    # FR-ENG-06: влияние открытой остановки (AL-S1) пересчитывается каждую заводскую минуту
   dq_live_lost: downtime         # DQ-02 live: журнал vs PDOT+ADOT (downtime) | PBT−APT (literal)

@@ -414,3 +414,23 @@ def test_s1_open_stop_text_and_impact_refresh_every_plant_minute(cfg: TwinConfig
     core.advance_to(at(65))
     s1 = [a for a in of_type(core.drain()[0], AlertUpsert) if a.rule_id == "AL-S1"]
     assert "потеря ≈ 14,2 авто" in s1[-1].message_ru
+
+
+def test_live_e_and_oee_hidden_for_the_first_30_minutes_of_apt(cfg: TwinConfig) -> None:
+    """STAB-10: bodies started in the previous shift make E > 1 on a short APT (07:15)."""
+    assert cfg.rules.engine.live_kpi_min_apt_min == 30
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    run(core, [unit("PAINT-1", at(1 + k), n=k) for k in range(16)])
+
+    def paint(now_min: float) -> dict[str, object]:
+        msgs = core.live_kpi(at(now_min))
+        return next(m for m in msgs if m.type == "kpi" and m.data.get("code") == "PAINT-1").data
+
+    early = paint(20)
+    assert early["effectiveness"] is None
+    assert early["oee"] is None
+    assert early["pq"] == 16
+    later = paint(31)
+    assert later["effectiveness"] is not None
+    assert later["oee"] is not None
