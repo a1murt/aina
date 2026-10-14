@@ -12,8 +12,9 @@ import { QueryState } from "@/components/query-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { api, getClaims } from "@/lib/api/client";
+import { api } from "@/lib/api/client";
 import { useClosedShifts, type KpiShiftRow } from "@/lib/api/shifts";
+import { useRole } from "@/lib/api/use-role";
 import type { CorrelationsView, ParetoView, SpcArea, SpcView } from "@/lib/api/types";
 import { useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
@@ -46,7 +47,7 @@ interface BodyTrace {
 export function QualityView() {
   const t = useTranslations("quality");
   const plant = usePlant();
-  const role = getClaims()?.role ?? "";
+  const role = useRole() ?? "";
   const spc = useQuery({ queryKey: ["quality", "spc"], queryFn: () => api<SpcView>("/api/v1/quality/spc"), refetchInterval: 60_000 });
   const pareto = useQuery({ queryKey: ["quality", "pareto"], queryFn: () => api<ParetoView>("/api/v1/quality/pareto"), refetchInterval: 60_000 });
   const corr = useQuery({ queryKey: ["quality", "corr"], queryFn: () => api<CorrelationsView>("/api/v1/quality/correlations"), refetchInterval: 120_000 });

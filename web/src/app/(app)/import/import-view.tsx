@@ -10,8 +10,9 @@ import { ErrorDetails } from "@/components/query-state";
 import { SeverityBadge, SeverityIcon } from "@/components/state-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { ApiError, downloadFile, getClaims, getToken, NetworkError } from "@/lib/api/client";
+import { ApiError, downloadFile, getToken, NetworkError } from "@/lib/api/client";
 import { useErrorMessage } from "@/lib/api/errors";
+import { useRole } from "@/lib/api/use-role";
 import type { ImportReport, Severity } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -78,7 +79,7 @@ export function ImportView() {
   const [files, setFiles] = useState<File[]>([]);
   const [reanalyseOff, setReanalyseOff] = useState(false);
   const busy = phase.kind === "upload" || phase.kind === "analyse";
-  const role = getClaims()?.role ?? "";
+  const role = useRole() ?? "";
 
   async function start(list: FileList | File[] | null, reanalyse = false) {
     const picked = Array.from(list ?? []);

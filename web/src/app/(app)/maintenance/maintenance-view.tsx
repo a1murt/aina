@@ -25,8 +25,9 @@ import { SeverityIcon, StateBadge } from "@/components/state-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { api, ApiError, getClaims } from "@/lib/api/client";
+import { api, ApiError } from "@/lib/api/client";
 import { useErrorMessage } from "@/lib/api/errors";
+import { useRole } from "@/lib/api/use-role";
 import type { Fmt } from "@/lib/format";
 import type { AlertView, HealthFull, LimitForecast, Page, PredictionView, TelemetryView, WorkOrderStatus, WorkOrderView } from "@/lib/api/types";
 import { useLive } from "@/lib/live-store";
@@ -61,7 +62,7 @@ export function MaintenanceView() {
   const t = useTranslations("maintenance");
   const locale = useLocale();
   const plant = usePlant();
-  const role = getClaims()?.role ?? "";
+  const role = useRole() ?? "";
   const live = useLive((s) => s.equipment);
   const canPred = PRED_ROLES.includes(role);
   const canWo = WO_ROLES.includes(role);
@@ -133,6 +134,11 @@ export function MaintenanceView() {
   }, [selected, first]);
   const current = selected;
   const horizon = predictions.data?.items[0]?.horizon_h ?? null;
+  // Equipment types the PdM models cover, as seen in the predictions (null: nothing computed yet).
+  const modelled = useMemo(() => {
+    const types = (predictions.data?.items ?? []).map((p) => p.type ?? plant.equipment[p.equipment]?.type).filter((x): x is string => Boolean(x));
+    return types.length ? new Set(types) : null;
+  }, [predictions.data, plant.equipment]);
 
   const fromAlert = useMutation({
     mutationFn: (alert: AlertView) => api<WorkOrderView>("/api/v1/work-orders", { method: "POST", body: { alert_id: alert.id } }),
@@ -299,7 +305,7 @@ export function MaintenanceView() {
             </table>
           </CardBody>
         </Card>
-        {current ? <EquipmentCard code={current} canPred={canPred} /> : null}
+        {current ? <EquipmentCard code={current} canPred={canPred} modelled={modelled} /> : null}
       </div>
 
       {canWo ? <Kanban orders={orders.data?.items ?? []} loading={orders.isLoading} error={orders.error} canWrite={canWrite} onNote={setNote} /> : null}
@@ -343,7 +349,7 @@ function HealthBar({ value }: { value: number | null }) {
   );
 }
 
-function EquipmentCard({ code, canPred }: { code: string; canPred: boolean }) {
+function EquipmentCard({ code, canPred, modelled }: { code: string; canPred: boolean; modelled: Set<string> | null }) {
   const t = useTranslations("maintenance.card");
   const plant = usePlant();
   const [signal, setSignal] = useState<string | null>(null);
@@ -410,7 +416,9 @@ function EquipmentCard({ code, canPred }: { code: string; canPred: boolean }) {
             </ol>
           </div>
         ) : h ? (
-          <p className="text-xs text-muted-foreground">{t("noPrediction")}</p>
+          <p className="text-xs text-muted-foreground">
+            {modelled && !modelled.has(plant.equipment[code]?.type ?? "") ? t("noModel") : t("noPrediction")}
+          </p>
         ) : null}
         {canPred && hist.length > 1 ? (
           <div>
