@@ -7,7 +7,8 @@ import { useState } from "react";
 
 import { AlertsFeed } from "@/components/alerts";
 import { CLASSIFY_ROLES } from "@/components/live/equipment-drawer";
-import { usePlant } from "@/components/plant-context";
+import { impactOf, useStopImpacts } from "@/components/live/stop-impact";
+import { usePlant, type Plant } from "@/components/plant-context";
 import { ReasonPicker } from "@/components/reason-picker";
 import { useTicker } from "@/components/shell/header-widgets";
 import { StateBadge } from "@/components/state-badge";
@@ -15,23 +16,50 @@ import { Badge } from "@/components/ui/badge";
 import { Sheet } from "@/components/ui/sheet";
 import { sendAction } from "@/lib/actions";
 import { ApiError, getClaims } from "@/lib/api/client";
-import type { DowntimeLive } from "@/lib/api/types";
+import type { DowntimeLive, EquipmentLive } from "@/lib/api/types";
 import { plantNow, useLive } from "@/lib/live-store";
+
+/**
+ * Open stops as the floor sees them: a line stop caused by one of its units is the same event
+ * as the unit stop, so it is folded under it (the line shows as the subtitle) — FE-3.
+ */
+export function foldLineStops(open: Record<string, DowntimeLive>, plant: Plant): DowntimeLive[] {
+  const all = Object.values(open).filter((d) => !d.end_ts);
+  const unitLines = new Set(all.filter((d) => d.entity !== d.line && !plant.lines[d.entity]).map((d) => d.line));
+  return all
+    .filter((d) => !(plant.lines[d.entity] && unitLines.has(d.entity)))
+    .sort((a, b) => Number(b.state === "DOWN_UNPLANNED") - Number(a.state === "DOWN_UNPLANNED") || a.start_ts.localeCompare(b.start_ts));
+}
+
+/** The unit behind a line code: its open unit stop, else a unit of the line that is down. */
+export function causeOf(
+  code: string,
+  open: Record<string, DowntimeLive>,
+  equipment: Record<string, EquipmentLive>,
+  plant: Plant,
+): string {
+  if (!plant.lines[code]) return code;
+  const stop = Object.values(open).find((d) => !d.end_ts && d.line === code && d.entity !== code);
+  if (stop) return stop.entity;
+  const down = Object.values(plant.equipment).find((e) => e.line === code && equipment[e.code]?.state?.startsWith("DOWN"));
+  return down?.code ?? code;
+}
 
 /** Open stops (with «needs classification») and open alerts with actions (SPEC §13.2 /live). */
 export function Incidents({ onSelect }: { onSelect: (code: string) => void }) {
   const t = useTranslations("live.incidents");
+  const tl = useTranslations("live");
   const plant = usePlant();
   const open = useLive((s) => s.downtimeOpen);
   const clock = useLive((s) => s.clock);
   const now = useTicker(1000);
+  const impacts = useStopImpacts();
   const role = getClaims()?.role ?? "";
   const [target, setTarget] = useState<DowntimeLive | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pn = plantNow(clock, now);
-  const stops = Object.values(open)
-    .filter((d) => !d.end_ts)
-    .sort((a, b) => Number(b.state === "DOWN_UNPLANNED") - Number(a.state === "DOWN_UNPLANNED") || a.start_ts.localeCompare(b.start_ts));
+  const stops = foldLineStops(open, plant);
+  const select = (code: string) => onSelect(causeOf(code, open, useLive.getState().equipment, plant));
   const classify = useMutation({
     mutationFn: ({ d, reason }: { d: DowntimeLive; reason: string }) =>
       sendAction({ kind: "classify", entity: d.entity, start_ts: d.start_ts, reason_code: reason }),
@@ -50,12 +78,20 @@ export function Incidents({ onSelect }: { onSelect: (code: string) => void }) {
         {stops.map((d) => {
           const min = pn ? (pn - Date.parse(d.start_ts)) / 60_000 : d.duration_min;
           const reason = d.reason_code ? plant.reasons[d.reason_code] : undefined;
+          const impact = impactOf(impacts, d);
           return (
             <li key={d.entity} data-testid="open-stop" data-entity={d.entity} className="flex items-center gap-3 border-b px-3 py-2 last:border-b-0">
-              <button type="button" onClick={() => onSelect(d.entity)} className="min-w-0 flex-1 text-left">
+              <button type="button" onClick={() => select(d.entity)} className="min-w-0 flex-1 text-left">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold whitespace-nowrap">{d.entity}</span>
-                  <span className="text-sm font-semibold tabular-nums">{plant.fmt.clock(min)}</span>
+                  <span className="flex items-center gap-2">
+                    {impact && impact.lostUnits > 0 ? (
+                      <Badge tone="critical" data-testid="loss-chip" className="tabular-nums">
+                        {tl("lossChip", { units: plant.fmt.num(impact.lostUnits, 1) })}
+                      </Badge>
+                    ) : null}
+                    <span className="text-sm font-semibold tabular-nums">{plant.fmt.clock(min)}</span>
+                  </span>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   <StateBadge state={d.state} />

@@ -16,12 +16,13 @@ import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import { sendAction } from "@/lib/actions";
 import { api, ApiError, getClaims } from "@/lib/api/client";
-import type { DowntimeView, HealthView, Page, TelemetryView } from "@/lib/api/types";
+import type { DowntimeView, EquipmentLive, HealthView, Page, TelemetryView } from "@/lib/api/types";
 import { plantNow, useLive } from "@/lib/live-store";
 import { cn } from "@/lib/utils";
 
 export const CLASSIFY_ROLES = ["master", "operator"];
 const WORK_ORDER_ROLES = ["maintenance", "master", "admin"];
+const SIGNAL_STATUSES = ["warning", "limit", "alarm"] as const;
 
 function Section({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -35,30 +36,38 @@ function Section({ title, icon, children }: { title: string; icon?: React.ReactN
   );
 }
 
-/** Equipment card (SPEC §13.2 /live): state, reason, telemetry with limits, health, events, actions. */
+/**
+ * Equipment card (SPEC §13.2 /live): state, reason, telemetry with limits, health, events, actions.
+ * Opened with a line code (a line stop) it is a slim line card: state and stops only — health,
+ * telemetry and work orders exist for units only (FE-3).
+ */
 export function EquipmentDrawer({ code, onClose }: { code: string | null; onClose: () => void }) {
   const t = useTranslations("live.drawer");
   const plant = usePlant();
   const qc = useQueryClient();
-  const live = useLive((s) => (code ? s.equipment[code] : undefined));
+  const eq = code ? plant.equipment[code] : undefined;
+  const lineAsset = code && !eq ? plant.lines[code] : undefined;
+  const isUnit = Boolean(eq);
+  const live = useLive((s) => (code ? (s.equipment[code] ?? s.lines[code]) : undefined)) as
+    | (Partial<EquipmentLive> & Pick<EquipmentLive, "state" | "since" | "reason_code">)
+    | undefined;
   const openStop = useLive((s) => (code ? s.downtimeOpen[code] : undefined));
   const clock = useLive((s) => s.clock);
   const now = useTicker(1000);
   const role = getClaims()?.role ?? "";
   const [picking, setPicking] = useState(false);
   const [note, setNote] = useState<{ tone: "ok" | "warn" | "err"; text: string } | null>(null);
-  const eq = code ? plant.equipment[code] : undefined;
 
   const health = useQuery({
     queryKey: ["health", code],
     queryFn: () => api<HealthView>(`/api/v1/equipment/${code}/health`),
-    enabled: Boolean(code),
+    enabled: isUnit,
     refetchInterval: 15_000,
   });
   const telemetry = useQuery({
     queryKey: ["telemetry", code],
     queryFn: () => api<TelemetryView>(`/api/v1/equipment/${code}/telemetry`),
-    enabled: Boolean(code),
+    enabled: isUnit,
     refetchInterval: 60_000,
   });
   const events = useQuery({
@@ -113,7 +122,7 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
   const reason = live?.reason_code ? plant.reasons[live.reason_code] : undefined;
   const series = new Map((telemetry.data?.signals ?? []).map((s) => [s.code, s]));
   const canClassify = CLASSIFY_ROLES.includes(role);
-  const canWo = WORK_ORDER_ROLES.includes(role);
+  const canWo = isUnit && WORK_ORDER_ROLES.includes(role);
   const h = health.data;
 
   return (
@@ -127,7 +136,7 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
       title={
         <span className="flex items-baseline gap-2">
           {code}
-          <span className="text-sm font-normal text-muted-foreground">{plant.name(eq)}</span>
+          <span className="text-sm font-normal text-muted-foreground">{plant.name(eq ?? lineAsset)}</span>
         </span>
       }
       footer={
@@ -172,10 +181,14 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
             <dd className="tabular-nums">{plant.fmt.dateTime(live?.since)}</dd>
             <dt className="text-muted-foreground">{t("reason")}</dt>
             <dd>{reason ? `${plant.name(reason)} (${reason.code})` : live?.reason_code ?? "—"}</dd>
-            <dt className="text-muted-foreground">{t("class")}</dt>
-            <dd>
-              {eq?.criticality ?? "—"} · {plant.name(plant.assets?.equipment_types[eq?.type ?? ""], eq?.type)}
-            </dd>
+            {isUnit ? (
+              <>
+                <dt className="text-muted-foreground">{t("class")}</dt>
+                <dd>
+                  {eq?.criticality ?? "—"} · {plant.name(plant.assets?.equipment_types[eq?.type ?? ""], eq?.type)}
+                </dd>
+              </>
+            ) : null}
           </dl>
         </Section>
 
@@ -185,6 +198,8 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
           </Section>
         ) : null}
 
+        {isUnit ? (
+          <>
         <Section title={t("health")} icon={<HeartPulse aria-hidden className="size-4" />}>
           <QueryState loading={health.isLoading} error={health.error} compact />
           {h ? (
@@ -218,13 +233,19 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
             {(h?.signals ?? []).map((s) => {
               const ser = series.get(s.code);
               const pts = (ser?.points ?? []).map((p) => [Date.parse(p[0]), p[1] ?? null] as [number, number | null]);
-              const status = s.status === "normal" ? null : s.status;
+              const status = (SIGNAL_STATUSES as readonly string[]).includes(s.status ?? "")
+                ? (s.status as (typeof SIGNAL_STATUSES)[number])
+                : null;
               return (
                 <li key={s.code} data-testid={`signal-${s.code}`}>
                   <div className="flex items-baseline justify-between gap-2 text-sm">
                     <span>{plant.name(s)}</span>
                     <span className="flex items-baseline gap-2 tabular-nums">
-                      {status ? <Badge tone={status === "alarm" || status === "limit" ? "critical" : "warning"}>{status}</Badge> : null}
+                      {status ? (
+                        <Badge tone={status === "warning" ? "warning" : "critical"} data-testid="signal-status">
+                          {t(`signalStatus.${status}`)}
+                        </Badge>
+                      ) : null}
                       <span className="font-semibold">{plant.fmt.num(s.value, 2)}</span>
                       <span className="text-xs text-muted-foreground">{s.unit}</span>
                     </span>
@@ -239,6 +260,8 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
             })}
           </ul>
         </Section>
+          </>
+        ) : null}
 
         <Section title={t("events")} icon={<ListChecks aria-hidden className="size-4" />}>
           <QueryState loading={events.isLoading} error={events.error} compact />
@@ -249,7 +272,7 @@ export function EquipmentDrawer({ code, onClose }: { code: string | null; onClos
                 <span className="min-w-0 flex-1 truncate">
                   {d.reason_code ? plant.name(plant.reasons[d.reason_code], d.reason_code) : t("unclassified")}
                 </span>
-                <span className="tabular-nums">{d.open ? t("open") : plant.fmt.clock((d.duration_s ?? 0) / 60)}</span>
+                <span className="tabular-nums">{d.open ? t("open") : plant.fmt.duration((d.duration_s ?? 0) / 60)}</span>
               </li>
             ))}
           </ul>

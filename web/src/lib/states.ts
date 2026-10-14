@@ -17,6 +17,7 @@ import type { Severity, StateCode } from "@/lib/api/types";
 /**
  * ISA-101 presentation of equipment / line states (SPEC §5.3, §13.1): CSS token, icon and
  * label key — a state is never shown by colour alone. Normal operation is neutral grey.
+ * Amber text uses `--isa-warning-text` (≥ 4.5:1 on the card); the bright amber stays for fills.
  */
 export interface StateMeta {
   Icon: LucideIcon;
@@ -37,7 +38,7 @@ export interface StateMeta {
 
 export const STATE_META: Record<StateCode, StateMeta> = {
   RUNNING: { Icon: Play, token: "--state-running", text: "text-state-running", bg: "bg-state-running", border: "border-state-running", tint: "bg-state-running/15", fill: "fill-state-running/15", stroke: "stroke-state-running", textFill: "fill-state-running", abnormal: false },
-  DEGRADED: { Icon: TriangleAlert, token: "--state-degraded", text: "text-state-degraded", bg: "bg-state-degraded", border: "border-state-degraded", tint: "bg-state-degraded/15", fill: "fill-state-degraded/15", stroke: "stroke-state-degraded", textFill: "fill-state-degraded", abnormal: true },
+  DEGRADED: { Icon: TriangleAlert, token: "--state-degraded", text: "text-isa-warning-text", bg: "bg-state-degraded", border: "border-state-degraded", tint: "bg-state-degraded/15", fill: "fill-state-degraded/15", stroke: "stroke-state-degraded", textFill: "fill-isa-warning-text", abnormal: true },
   STARVED: { Icon: CircleDashed, token: "--state-starved", text: "text-state-starved", bg: "bg-state-starved", border: "border-state-starved", tint: "bg-state-starved/15", fill: "fill-state-starved/15", stroke: "stroke-state-starved", textFill: "fill-state-starved", abnormal: true },
   BLOCKED: { Icon: Ban, token: "--state-blocked", text: "text-state-blocked", bg: "bg-state-blocked", border: "border-state-blocked", tint: "bg-state-blocked/15", fill: "fill-state-blocked/15", stroke: "stroke-state-blocked", textFill: "fill-state-blocked", abnormal: true },
   DOWN_UNPLANNED: { Icon: OctagonX, token: "--state-down-unplanned", text: "text-state-down-unplanned", bg: "bg-state-down-unplanned", border: "border-state-down-unplanned", tint: "bg-state-down-unplanned/15", fill: "fill-state-down-unplanned/15", stroke: "stroke-state-down-unplanned", textFill: "fill-state-down-unplanned", abnormal: true },
@@ -58,7 +59,7 @@ export function isStateCode(s: unknown): s is StateCode {
 
 export const SEVERITY_META: Record<Severity, { Icon: LucideIcon; token: string; text: string; bg: string; border: string; tint: string }> = {
   critical: { Icon: OctagonX, token: "--severity-critical", text: "text-severity-critical", bg: "bg-severity-critical", border: "border-severity-critical", tint: "bg-severity-critical/15" },
-  warning: { Icon: TriangleAlert, token: "--severity-warning", text: "text-severity-warning", bg: "bg-severity-warning", border: "border-severity-warning", tint: "bg-severity-warning/15" },
+  warning: { Icon: TriangleAlert, token: "--severity-warning", text: "text-isa-warning-text", bg: "bg-severity-warning", border: "border-severity-warning", tint: "bg-severity-warning/15" },
   info: { Icon: Info, token: "--severity-info", text: "text-severity-info", bg: "bg-severity-info", border: "border-severity-info", tint: "bg-severity-info/15" },
 };
 

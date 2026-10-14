@@ -84,6 +84,11 @@ test.describe.serial("P0 scenarios", () => {
     await expect(page.getByTestId("node-CONV-03")).toHaveAttribute("data-state", "DOWN_UNPLANNED", { timeout: 5_000 });
     await expect(page.locator('[data-testid="alert-row"][data-entity="CONV-03"][data-rule="AL-S1"]').first()).toBeVisible();
     await expect(page.locator('[data-testid="open-stop"][data-entity="CONV-03"]')).toBeVisible();
+    // the line stop of ASSY-1 is the same event: folded under CONV-03 (FE-3)
+    await expect(page.locator('[data-testid="open-stop"][data-entity="ASSY-1"]')).toHaveCount(0);
+    // the engine's loss estimate shows on the stop and on the schema (S14) once it is above zero
+    await expect(page.locator('[data-testid="open-stop"][data-entity="CONV-03"] [data-testid="loss-chip"]')).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByTestId("loss-callout-CONV-03")).toBeVisible();
   });
 
   test("reason classified on the terminal is visible on /live (US-3)", async ({ browser }) => {

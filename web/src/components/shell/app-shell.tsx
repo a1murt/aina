@@ -20,7 +20,9 @@ import { AlertsBell } from "@/components/alerts";
 import { COPILOT_ROLES, CopilotButton } from "@/components/copilot";
 import { LocaleSwitcher } from "@/components/locale-switcher";
 import { PlantProvider } from "@/components/plant-context";
+import { BrandMark } from "@/components/shell/brand-mark";
 import { ConnectionBadge, PlantClock, SpeedBadge, ThemeToggle, UserMenu } from "@/components/shell/header-widgets";
+import { SimNotRunningBanner } from "@/components/shell/sim-banner";
 import { getClaims, logout } from "@/lib/api/client";
 import { visibleScreens, type Claims, type ScreenKey } from "@/lib/auth";
 import { useLiveConnection } from "@/lib/ws";
@@ -42,10 +44,16 @@ function navHref(key: ScreenKey, href: string, claims: Claims): string {
   return href;
 }
 
-function Nav({ claims }: { claims: Claims }) {
+/**
+ * Navigation. With many header items the labels give way to icons (label in the tooltip) so the
+ * header never clips at projector widths (VIS-14, FE-9): more than 5 → icons below 2xl,
+ * 5 → icons below xl. `extra` counts other wide header buttons (the copilot).
+ */
+function Nav({ claims, extra = 0 }: { claims: Claims; extra?: number }) {
   const t = useTranslations("nav");
   const pathname = usePathname();
-  const many = visibleScreens(claims.role).length > 4;
+  const count = visibleScreens(claims.role).length + extra;
+  const labelClass = count > 5 ? "hidden 2xl:inline" : count > 4 ? "hidden xl:inline" : undefined;
   return (
     <nav aria-label={t("label")} className="flex min-w-0 items-center gap-0.5 overflow-x-auto">
       {visibleScreens(claims.role).map((s) => {
@@ -64,7 +72,7 @@ function Nav({ claims }: { claims: Claims }) {
             )}
           >
             <Icon aria-hidden className="size-4" />
-            <span className={many ? "hidden xl:inline" : undefined}>{t(s.key)}</span>
+            <span className={labelClass}>{t(s.key)}</span>
           </Link>
         );
       })}
@@ -97,14 +105,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         {!tv && claims ? (
           <header className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
             <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4">
-              <Link href="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
-                <span className="inline-flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                  <Factory aria-hidden className="size-4" />
-                </span>
-                <span className="hidden 2xl:inline">{t("name")}</span>
+              <Link href="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight" aria-label={t("name")}>
+                <BrandMark />
+                <span className="hidden lg:inline">{t("name")}</span>
               </Link>
-              <Nav claims={claims} />
-              <div className="ml-auto flex shrink-0 items-center gap-2.5">
+              <Nav claims={claims} extra={copilot ? 1 : 0} />
+              <div className="ml-auto flex shrink-0 items-center gap-2">
                 {copilot ? <CopilotButton /> : null}
                 <PlantClock />
                 <SpeedBadge />
@@ -117,6 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
           </header>
         ) : null}
+        {claims ? <SimNotRunningBanner /> : null}
         <main className="flex-1">{claims ? children : null}</main>
       </div>
     </PlantProvider>

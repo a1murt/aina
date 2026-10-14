@@ -1,15 +1,30 @@
 "use client";
 
-import { Factory, Loader2, LogIn } from "lucide-react";
+import { Loader2, LogIn } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState, type FormEvent } from "react";
 
 import { LocaleSwitcher } from "@/components/locale-switcher";
+import { BrandMark } from "@/components/shell/brand-mark";
 import { Button } from "@/components/ui/button";
 import { api, ApiError, saveToken } from "@/lib/api/client";
 import type { TokenView } from "@/lib/api/types";
 import { canAccess, decodeToken, ROLES, startPage } from "@/lib/auth";
+
+/**
+ * Path + query of `next` when it points into this app (same origin), else null — `//host` or
+ * `/\\host` are other sites to the browser (FE-11, open redirect).
+ */
+export function safeNext(next: string | null, origin: string): string | null {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+  try {
+    const u = new URL(next, origin);
+    return u.origin === origin ? `${u.pathname}${u.search}` : null;
+  } catch {
+    return null;
+  }
+}
 
 export function LoginForm() {
   const t = useTranslations("login");
@@ -34,7 +49,8 @@ export function LoginForm() {
       });
       saveToken(tok.access_token, tok.expires_at);
       const claims = decodeToken(tok.access_token);
-      const target = claims && next && next.startsWith("/") && canAccess(claims, next.split("?")[0] ?? next) ? next : claims ? startPage(claims) : "/";
+      const local = safeNext(next, window.location.origin);
+      const target = claims && local && canAccess(claims, local.split("?")[0] ?? local) ? local : claims ? startPage(claims) : "/";
       router.replace(target);
       router.refresh();
     } catch (err) {
@@ -52,9 +68,7 @@ export function LoginForm() {
       </div>
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-3">
-          <span className="inline-flex size-11 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Factory aria-hidden className="size-6" />
-          </span>
+          <BrandMark className="size-11 rounded-lg" />
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{tApp("name")}</h1>
             <p className="text-sm text-muted-foreground">{tApp("tagline")}</p>

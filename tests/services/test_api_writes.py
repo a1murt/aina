@@ -329,7 +329,7 @@ def test_assets_carry_the_schema_layout(client: TestClient, cfg: TwinConfig) -> 
     assert body["site"]["timezone"] == "Asia/Qostanay"
     assert body["flow"] == list(cfg.flow_lines)
     assert body["layout"]["flow_path"][0] == [140.0, 280.0]
-    assert {p["code"]: p["color_hex"] for p in body["products"]}["ONIX"] == "#5B8DEF"
+    assert {p["code"]: p["color_hex"] for p in body["products"]}["ONIX"] == "#22B8CF"
     conv = next(
         e
         for a in body["areas"]

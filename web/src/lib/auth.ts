@@ -51,13 +51,17 @@ export function decodeToken(token: string | undefined | null, nowMs: number = Da
   }
 }
 
-/** Screens of the web UI and the roles that see them (SPEC §3, §13.2). */
+/**
+ * Screens of the web UI and the roles that see them (SPEC §3, §13.2). Kept in line with the API
+ * role sets: a screen whose data the API refuses to a role is not offered to it (FE-10) — the
+ * terminal (routes/terminal.py, downtime.py) and quality (routes/quality.py) exclude admin.
+ */
 export const SCREENS = [
   { href: "/director", key: "director", roles: ["director", "admin"] },
   { href: "/live", key: "live", roles: ["director", "master", "maintenance", "quality", "admin"] },
-  { href: "/operator", key: "operator", roles: ["operator", "master", "admin"] },
+  { href: "/operator", key: "operator", roles: ["operator", "master"] },
   { href: "/maintenance", key: "maintenance", roles: ["maintenance", "director", "master", "admin"] },
-  { href: "/quality", key: "quality", roles: ["quality", "director", "master", "admin"] },
+  { href: "/quality", key: "quality", roles: ["quality", "director", "master"] },
   { href: "/reports", key: "reports", roles: ["master", "director"] },
   { href: "/import", key: "import", roles: ["director", "admin"] },
   { href: "/demo", key: "demo", roles: ["admin"] },

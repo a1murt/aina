@@ -1,6 +1,6 @@
 "use client";
 
-import { Gauge, LogOut, Moon, Pause, Radio, Sun, UserRound, WifiOff, RefreshCw } from "lucide-react";
+import { Clock3, Gauge, LogOut, Moon, Pause, Radio, Sun, UserRound, WifiOff, RefreshCw } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
@@ -21,26 +21,42 @@ export function useTicker(ms: number): number {
   return now;
 }
 
+/**
+ * The API sends a clock tick every 5 s (paused or not): with no tick for this long the plant
+ * time is unknown and is not extrapolated any further (VIS-21).
+ */
+export const CLOCK_STALE_MS = 10_000;
+
 /** Plant time, date and shift, extrapolated between WS clock ticks with the sim speed. */
 export function PlantClock({ large = false }: { large?: boolean }) {
   const t = useTranslations("header");
+  const tc = useTranslations("shell.clock");
   const { fmt, assets } = usePlant();
   const clock = useLive((s) => s.clock);
   const now = useTicker(clock && clock.speed > 10 ? 250 : 1000);
   const ms = plantNow(clock, now);
   if (ms === null || !assets) return <span className="text-sm text-muted-foreground">—</span>;
+  if (clock && now - clock.receivedAt > CLOCK_STALE_MS) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground"
+        title={tc("lastTick", { time: fmt.time(clock.plantMs, true) })}
+        data-testid="plant-clock"
+        data-stale="1"
+      >
+        <Clock3 aria-hidden className="size-4" />
+        {tc("noData")}
+      </span>
+    );
+  }
   const shift = clock?.shift;
   return (
     <div className="flex items-baseline gap-2 tabular-nums" aria-label={t("plantTime")} data-testid="plant-clock">
       <span className={cn("font-semibold", large ? "text-2xl" : "text-base")}>{fmt.time(ms, true)}</span>
-      <span className="text-xs text-muted-foreground">{fmt.dayMonth(ms)}</span>
-      {shift ? (
-        <span className="hidden text-xs text-muted-foreground lg:inline">
-          {t("shift", { code: shift.code })}
-        </span>
-      ) : (
-        <span className="hidden text-xs text-muted-foreground lg:inline">{t("noShift")}</span>
-      )}
+      <span className={cn("text-xs text-muted-foreground", !large && "hidden 2xl:inline")}>{fmt.dayMonth(ms)}</span>
+      <span className={cn("text-xs text-muted-foreground", !large && "hidden 2xl:inline")}>
+        {shift ? t("shift", { code: shift.code }) : t("noShift")}
+      </span>
     </div>
   );
 }
@@ -60,9 +76,9 @@ export function SpeedBadge() {
   );
 }
 
-/** LIVE / переподключение / офлайн (SPEC §13.1). */
+/** Онлайн / переподключение / офлайн (SPEC §13.1): follows the data on the socket (ws.ts). */
 export function ConnectionBadge() {
-  const t = useTranslations("connection");
+  const t = useTranslations("shell.connection");
   const status = useLive((s) => s.status);
   const view =
     status === "live"
@@ -107,11 +123,11 @@ export function UserMenu({ claims }: { claims: Claims }) {
   const tr = useTranslations("roles");
   return (
     <div className="flex items-center gap-2">
-      <div className="hidden text-right leading-tight 2xl:block">
+      <div className="hidden text-right leading-tight min-[1800px]:block">
         <div className="text-sm font-medium">{claims.name || claims.usr}</div>
         <div className="text-xs text-muted-foreground">{tr(claims.role)}</div>
       </div>
-      <span title={`${claims.name || claims.usr} · ${tr(claims.role)}`} className="2xl:hidden">
+      <span title={`${claims.name || claims.usr} · ${tr(claims.role)}`} className="min-[1800px]:hidden">
         <UserRound aria-hidden className="size-5 text-muted-foreground" />
       </span>
       <button

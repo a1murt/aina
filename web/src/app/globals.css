@@ -38,6 +38,11 @@
   --isa-warning: oklch(0.72 0.16 70);
   --isa-info: oklch(0.55 0.15 250);
   --isa-planned: oklch(0.52 0.18 300);
+  /* text on the card / page: amber and blue fills are too light for small text (≥ 4.5:1) */
+  --isa-warning-text: oklch(0.52 0.13 70);
+  --isa-info-strong: oklch(0.55 0.15 250);
+  /* schema outlines, grid and flow band: visible on a projector */
+  --schema-line: oklch(0.8 0 0);
 
   /* equipment / line states (SPEC §5.3) */
   --state-running: var(--isa-normal);
@@ -82,6 +87,9 @@
   --isa-warning: oklch(0.8 0.15 75);
   --isa-info: oklch(0.68 0.13 250);
   --isa-planned: oklch(0.66 0.16 300);
+  --isa-warning-text: oklch(0.8 0.15 75);
+  --isa-info-strong: oklch(0.5 0.14 250);
+  --schema-line: oklch(0.42 0 0);
 }
 
 @theme inline {
@@ -115,6 +123,9 @@
   --color-isa-warning: var(--isa-warning);
   --color-isa-info: var(--isa-info);
   --color-isa-planned: var(--isa-planned);
+  --color-isa-warning-text: var(--isa-warning-text);
+  --color-isa-info-strong: var(--isa-info-strong);
+  --color-schema-line: var(--schema-line);
 
   --color-state-running: var(--state-running);
   --color-state-degraded: var(--state-degraded);
@@ -161,6 +172,10 @@
 }
 .flow-dash {
   animation: flow-dash 1.6s linear infinite;
+}
+/* the flow stands still while the plant clock is paused or the section is stopped (VIS-12) */
+.flow-dash[data-moving="0"] {
+  animation-play-state: paused;
 }
 
 .body-ok {
