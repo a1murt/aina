@@ -612,7 +612,25 @@
     "noDefects": "Ақау жоқ",
     "shiftKey": "{date} · {shift} ауысымы",
     "lastShift": "{shift} бойынша",
-    "currentShift": "ағымдағы ауысым"
+    "currentShift": "ағымдағы ауысым",
+    "body": {
+      "status": {
+        "finished": "шығарылды",
+        "in_process": "өндірісте",
+        "in_rework": "пысықтауда",
+        "scrap": "есептен шығарылды"
+      },
+      "result": {
+        "pass": "жарамды",
+        "defect": "ақау",
+        "rework_pass": "пысықтаудан кейін жарамды",
+        "scrap": "ақау (есептен шығару)"
+      },
+      "disposition": {
+        "rework": "пысықтау",
+        "scrap": "есептен шығару"
+      }
+    }
   },
   "copilot": {
     "open": "Копилот",

@@ -313,7 +313,14 @@ function Pareto({ data }: { data: ParetoView }) {
 
 function BodySearch() {
   const t = useTranslations("quality");
+  const tb = useTranslations("quality.body");
   const plant = usePlant();
+  // enums of routes/bodies.py through the message book; an unknown value is shown as is
+  const en = (group: "status" | "result" | "disposition", v: string) => (tb.has(`${group}.${v}` as "status.finished") ? tb(`${group}.${v}` as "status.finished") : v);
+  const defectName = (code: string | null, fallback: string | null) => {
+    const d = plant.defects.find((x) => x.code === code);
+    return d ? plant.name(d) : (fallback ?? "");
+  };
   const [input, setInput] = useState("");
   const [id, setId] = useState<string | null>(null);
   const body = useQuery({
@@ -350,13 +357,13 @@ function BodySearch() {
           <div className="grid gap-4 md:grid-cols-2" data-testid="body-trace">
             <div>
               <p className="mb-2 text-sm">
-                <b>{b.body_id}</b> · {b.product ?? "—"} · <Badge tone={b.defects.length ? "warning" : "neutral"}>{b.status}</Badge>
+                <b>{b.body_id}</b> · {b.product ?? "—"} · <Badge tone={b.defects.length ? "warning" : "neutral"}>{en("status", b.status)}</Badge>
               </p>
               <ol className="relative space-y-1.5 border-l pl-4 text-sm">
                 {b.events.map((e) => (
                   <li key={`${e.ts}-${e.line}`}>
-                    <span className="tabular-nums text-muted-foreground">{plant.fmt.dateTime(e.ts)}</span> · <b>{e.line}</b> {e.line_name_ru ?? ""} —{" "}
-                    <span className={cn(e.defect_code && "font-medium text-severity-warning")}>{e.result}</span>
+                    <span className="tabular-nums text-muted-foreground">{plant.fmt.dateTime(e.ts)}</span> · <b>{e.line}</b> {plant.name(plant.lines[e.line], e.line_name_ru ?? "")} —{" "}
+                    <span className={cn(e.defect_code && "font-medium text-severity-warning")}>{en("result", e.result)}</span>
                     {e.defect_code ? ` (${e.defect_code})` : ""}
                   </li>
                 ))}
@@ -369,7 +376,7 @@ function BodySearch() {
                 {b.defects.map((d) => (
                   <li key={d.id} className="flex items-center gap-2">
                     <TriangleAlert aria-hidden className="size-4 text-severity-warning" />
-                    <b>{d.defect_code}</b> {d.defect_name_ru ?? ""} · {d.area} · {d.disposition}
+                    <b>{d.defect_code}</b> {defectName(d.defect_code, d.defect_name_ru)} · {plant.entityName(d.area)} · {en("disposition", d.disposition)}
                   </li>
                 ))}
               </ul>

@@ -613,7 +613,25 @@
     "noDefects": "Дефектов нет",
     "shiftKey": "{date} · смена {shift}",
     "lastShift": "за {shift}",
-    "currentShift": "текущая смена"
+    "currentShift": "текущая смена",
+    "body": {
+      "status": {
+        "finished": "выпущен",
+        "in_process": "в производстве",
+        "in_rework": "на доработке",
+        "scrap": "списан"
+      },
+      "result": {
+        "pass": "годен",
+        "defect": "дефект",
+        "rework_pass": "годен после доработки",
+        "scrap": "брак (списание)"
+      },
+      "disposition": {
+        "rework": "доработка",
+        "scrap": "списание"
+      }
+    }
   },
   "copilot": {
     "open": "Копилот",
