@@ -263,7 +263,7 @@ export function PlanChart({
           if (x == null) return "";
           const head = Math.abs(x - nowX) < 1e-6 ? `${t("today")}, ${plant.fmt.dateShort(plan.as_of)}` : plant.fmt.date(dateAt(Math.round(x) - 1));
           const rows = ps
-            .filter((p) => p.value?.[1] != null && !p.seriesName.includes("-"))
+            .filter((p) => p.value?.[1] != null && !/^(base|scen)-(p10|band)$/.test(p.seriesName))
             .map((p) => `<span style="color:${p.color}">●</span> ${p.seriesName}: <b>${plant.fmt.int(p.value[1])}</b>`);
           const f = fanAt(base, x);
           if (f && f.p90 > f.p10) rows.push(`${t("fanRange")}: ${plant.fmt.int(f.p10)}–${plant.fmt.int(f.p90)}`);
