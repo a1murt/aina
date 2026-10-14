@@ -390,3 +390,23 @@ async def http_get(port: int, path: str) -> tuple[int, dict[str, Any]]:
     writer.close()
     head, _, body = raw.partition(b"\r\n\r\n")
     return int(head.split()[1]), json.loads(body)
+
+
+async def test_timers_wait_while_the_plant_clock_is_stale(cfg: TwinConfig) -> None:
+    """STAB-4: a stale clock (simulator not writing, host slept) does not drive the timers."""
+    svc, clock = make_service(cfg, FakeRedis())
+    calls: list[datetime] = []
+    svc.core.advance_to = calls.append  # type: ignore[method-assign,assignment]
+    stale = {"value": True}
+    type(clock).is_stale = property(lambda _self: stale["value"])  # type: ignore[attr-defined]
+    try:
+        svc.ready = True
+        task = asyncio.create_task(svc.timers())
+        await asyncio.sleep(0.35)
+        assert calls == []
+        stale["value"] = False
+        await wait_for(lambda: bool(calls))
+        svc.stopping.set()
+        await task
+    finally:
+        del type(clock).is_stale  # type: ignore[attr-defined]

@@ -144,7 +144,9 @@ async def test_sim_clock_reads_redis_state() -> None:
     assert not bool(clock.is_stale)  # bool(): keep mypy from narrowing the property
     wall.now = WALL0 + timedelta(seconds=30)  # sim stopped writing for > stale_after (10 s)
     assert clock.is_stale
-    assert clock.now() == T0 + timedelta(minutes=30)
+    assert clock.now() == T0 + timedelta(minutes=10)  # STAB-4: extrapolation stops at 10 s
+    wall.now = WALL0 + timedelta(hours=1)  # the host slept for an hour
+    assert clock.now() == T0 + timedelta(minutes=10)
 
     await publish_clock_state(kv, ClockState(plant_time=T0, wall_ts=WALL0, speed=60.0, paused=True))
     await clock.refresh()
@@ -219,3 +221,16 @@ async def test_sim_clock_poll_survives_redis_errors() -> None:
                 break
             await asyncio.sleep(0.01)
         assert clock.now() == later
+
+
+def test_extrapolation_cap() -> None:
+    """STAB-4: plant time moves at most ``max_elapsed`` x speed past the last write."""
+    state = ClockState(plant_time=T0, wall_ts=WALL0, speed=60.0)
+    cap = timedelta(seconds=10)
+    assert state.plant_time_at(WALL0 + timedelta(seconds=5), max_elapsed=cap) == T0 + timedelta(
+        minutes=5
+    )
+    assert state.plant_time_at(WALL0 + timedelta(hours=8), max_elapsed=cap) == T0 + timedelta(
+        minutes=10
+    )
+    assert state.plant_time_at(WALL0 + timedelta(hours=8)) == T0 + timedelta(hours=480)

@@ -18,9 +18,10 @@ Redis key ``plant:clock`` (string, JSON, format version 1)::
      "sim_mode": "live"}                             # live | backfill | ml-dataset
 
 Readers extrapolate between writes: ``plant_now = plant_time + (wall_now - wall_ts) * speed``
-(no extrapolation while paused). The simulator rewrites the key on every start / pause / speed
-change / reset and periodically (about once per wall second) while running, so readers stay
-exact even after a missed update; :attr:`SimClock.is_stale` flags a key that stopped updating.
+(no extrapolation while paused; :class:`SimClock` extrapolates at most ``stale_after``). The
+simulator rewrites the key on every start / pause / speed change / reset and periodically
+(about once per wall second), so readers stay exact even after a missed update;
+:attr:`SimClock.is_stale` flags a key that stopped updating.
 Writers and readers run on the same host, so their wall clocks agree.
 """
 
@@ -161,11 +162,17 @@ class ClockState:
         if self.speed <= 0:
             raise ClockStateError(f"speed must be positive, got {self.speed}")
 
-    def plant_time_at(self, wall_now: datetime) -> datetime:
-        """Extrapolated plant time at wall-clock instant ``wall_now``."""
+    def plant_time_at(
+        self, wall_now: datetime, *, max_elapsed: timedelta | None = None
+    ) -> datetime:
+        """Extrapolated plant time at wall-clock instant ``wall_now``; with ``max_elapsed`` the
+        extrapolation stops that long after the write (a writer that stopped, or a host that
+        slept, must not move plant time forward by hours, STAB-4)."""
         if self.paused:
             return self.plant_time
         elapsed = max(ensure_utc(wall_now) - self.wall_ts, timedelta(0))
+        if max_elapsed is not None:
+            elapsed = min(elapsed, max_elapsed)
         return self.plant_time + elapsed * self.speed
 
     def advanced_to(self, wall_now: datetime) -> ClockState:
@@ -305,7 +312,7 @@ class SimClock(Clock):
                 f"no plant time yet: Redis key '{self._key}' has not been read "
                 "(is services/sim running? call refresh() / wait_ready() first)"
             )
-        return self._state.plant_time_at(self._wall())
+        return self._state.plant_time_at(self._wall(), max_elapsed=self._stale_after)
 
     async def refresh(self) -> ClockState | None:
         """Read the key once; keeps the previous state if the key is missing."""

@@ -414,10 +414,15 @@ class EngineService:
         except REDIS_ERRORS as exc:
             log.warning("publish_failed", error=str(exc))
 
+    def _clock_stale(self) -> bool:
+        """The simulator stopped writing the clock (or the host slept): plant time is frozen at
+        the cap, so timers and PdM wait instead of acting on it (STAB-4)."""
+        return bool(getattr(self.clock, "is_stale", False))
+
     async def timers(self) -> None:
         while not self.stopping.is_set():
             await asyncio.sleep(0.1)
-            if self.paused or not self.ready:
+            if self.paused or not self.ready or self._clock_stale():
                 continue
             await self._guard("timers", self._timers_tick)
 
@@ -440,6 +445,8 @@ class EngineService:
         while not self.stopping.is_set():
             await asyncio.sleep(0.5)
             if self.paused or not self.ready or self.serving is None or self.pdm_feed is None:
+                continue
+            if self._clock_stale():
                 continue
             await self._guard("pdm", self._pdm_tick)
 
