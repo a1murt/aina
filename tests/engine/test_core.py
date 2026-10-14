@@ -34,6 +34,7 @@ from qost_engine.core import (
 )
 from qost_engine.writer import coalesce
 from twin_core.config import TwinConfig
+from twin_core.rules import Alert
 
 
 def latest_alerts(effects: Sequence[object]) -> dict[str, AlertUpsert]:
@@ -333,3 +334,65 @@ def test_old_stop_reclassification_goes_to_the_writer(cfg: TwinConfig) -> None:
     assert requests[0].reason_code == "ME-CHAIN"
     assert requests[0].planned is False
     assert requests[0].user == "master1"
+
+
+def _b1(severity: str, level: int) -> Alert:
+    return Alert(
+        "AL-B1",
+        severity,  # type: ignore[arg-type]
+        "buffer",
+        "EOL",
+        SHIFT_A.date(),
+        {"level": level, "capacity": 10, "direction": "low"},
+        None,
+        "2026-10-16T02:30:00Z",
+    )
+
+
+def test_escalation_survives_downgrade_after_first_escalation(cfg: TwinConfig) -> None:
+    """STAB-1: critical -> escalated once -> warning (shorter chain) must not overflow."""
+    core = EngineCore(cfg, mode="live")
+    t0 = at(30)
+    core.advance_to(t0)
+    core.drain()
+    core._raise(_b1("critical", 0), t0.timestamp())
+    core.advance_to(t0 + timedelta(minutes=11))
+    first = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in first] == [(1, ("maintenance",))]
+    core._raise(_b1("warning", 1), (t0 + timedelta(minutes=12)).timestamp())
+    core.advance_to(t0 + timedelta(minutes=42))  # past both timeouts: no IndexError, no escalation
+    assert not of_type(core.drain()[0], AlertEscalate)
+    assert core.st.alerts[_b1("warning", 1).dedup_key].escalation_due is None
+
+
+def test_escalation_continues_after_upgrade_from_end_of_warning_chain(cfg: TwinConfig) -> None:
+    """STAB-1: warning at the end of its chain -> critical keeps escalating (critical chain)."""
+    core = EngineCore(cfg, mode="live")
+    t0 = at(30)
+    core.advance_to(t0)
+    core.drain()
+    core._raise(_b1("warning", 1), t0.timestamp())
+    core.advance_to(t0 + timedelta(minutes=31))
+    first = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in first] == [(1, ("director",))]
+    core.advance_to(t0 + timedelta(minutes=70))
+    assert not of_type(core.drain()[0], AlertEscalate)  # end of the warning chain
+    up = t0 + timedelta(minutes=71)
+    core._raise(_b1("critical", 0), up.timestamp())
+    core.advance_to(up + timedelta(minutes=11))
+    escalated = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in escalated] == [(2, ("director",))]
+    core.advance_to(up + timedelta(minutes=60))
+    assert not of_type(core.drain()[0], AlertEscalate)
+
+
+def test_escalation_upgrade_from_warning_level0_takes_earlier_due(cfg: TwinConfig) -> None:
+    core = EngineCore(cfg, mode="live")
+    t0 = at(30)
+    core.advance_to(t0)
+    core.drain()
+    core._raise(_b1("warning", 1), t0.timestamp())
+    core._raise(_b1("critical", 0), (t0 + timedelta(minutes=5)).timestamp())
+    core.advance_to(t0 + timedelta(minutes=16))
+    escalated = of_type(core.drain()[0], AlertEscalate)
+    assert [(e.level, e.roles) for e in escalated] == [(1, ("maintenance",))]

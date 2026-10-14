@@ -1321,9 +1321,25 @@ class EngineCore:
             value=value,
             projection=projection,
         )
-        if prev is not None:
+        if prev is not None and prev.severity == alert.severity:
             new.escalation_level = prev.escalation_level
             new.escalation_due = prev.escalation_due
+        elif prev is not None:
+            # severity changed: fit the escalation state to the chain of the new severity
+            esc = self.cfg.rules.escalation.get(alert.severity)
+            if esc is None or not esc.chain:
+                new.escalation_level = prev.escalation_level
+                new.escalation_due = None
+            else:
+                level = min(prev.escalation_level, len(esc.chain) - 1)
+                new.escalation_level = level
+                if level + 1 >= len(esc.chain) or self.mode != "live":
+                    new.escalation_due = None
+                else:
+                    due = t + esc.timeout_min * 60.0
+                    if prev.escalation_due is not None:
+                        due = min(due, prev.escalation_due)
+                    new.escalation_due = due
         elif self.mode == "live":
             esc = self.cfg.rules.escalation.get(alert.severity)
             if esc is not None and len(esc.chain) > 1:
@@ -1654,8 +1670,8 @@ class EngineCore:
         for key, a in list(self.st.alerts.items()):
             if a.escalation_due is not None and a.escalation_due <= t:
                 esc = self.cfg.rules.escalation.get(a.severity)  # type: ignore[call-overload]
-                if esc is None:
-                    a.escalation_due = None
+                if esc is None or a.escalation_level + 1 >= len(esc.chain):
+                    a.escalation_due = None  # end of the chain (e.g. restored from an old state)
                     continue
                 a.escalation_level += 1
                 level = a.escalation_level
