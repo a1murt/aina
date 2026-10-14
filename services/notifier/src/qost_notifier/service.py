@@ -55,6 +55,7 @@ from qost_notifier.settings import NotifierSettings
 from qost_notifier.store import NotificationRow, PendingDigest, Store
 from twin_core.clock import Clock, ClockNotReadyError, to_plant_tz
 from twin_core.config import TwinConfig
+from twin_core.redis_errors import REDIS_ERRORS
 
 log = structlog.get_logger("qost_notifier")
 
@@ -289,7 +290,7 @@ class Notifier:
                     count=50,
                     block=1000,
                 )
-            except (OSError, ConnectionError) as exc:
+            except REDIS_ERRORS as exc:
                 log.warning("stream_read_failed", error=str(exc)[:200])
                 await self.sleep(1.0)
                 continue

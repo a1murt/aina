@@ -37,8 +37,12 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, Self
 from zoneinfo import ZoneInfo
 
+import structlog
+
 if TYPE_CHECKING:
     from twin_core.settings import TwinSettings
+
+_log = structlog.get_logger("twin_core.clock")
 
 PLANT_CLOCK_KEY = "plant:clock"
 CLOCK_FORMAT_VERSION = 1
@@ -325,10 +329,20 @@ class SimClock(Clock):
             ) from None
 
     async def run(self) -> None:
-        """Poll forever (until cancelled)."""
+        """Poll forever (until cancelled). Any read error (Redis down, a malformed value) is
+        logged and the poll continues: a dead poller would extrapolate the last state forever."""
+        failing = False
         while True:
-            with contextlib.suppress(ClockStateError, OSError):
+            try:
                 await self.refresh()
+            except Exception as exc:
+                if not failing:
+                    _log.warning("clock_poll_failed", key=self._key, error=str(exc)[:200])
+                failing = True
+            else:
+                if failing:
+                    _log.info("clock_poll_recovered", key=self._key)
+                failing = False
             await asyncio.sleep(self._poll_interval_s)
 
     async def __aenter__(self) -> Self:

@@ -43,4 +43,15 @@ class EngineSettings(BaseSettings):
     level shift at the slot (S2) has samples; limit forecasts are evaluated at slot + settle."""
     engine_pdm_retry_s: float = 5.0
     """Wall time before a failed tick is retried."""
+    engine_consume_stale_s: float = 15.0
+    """``/readyz`` answers 503 when the last XREADGROUP is older than this (wall seconds) while
+    the engine is neither resetting nor holding back for a full write-behind buffer."""
+    engine_consume_exit_s: float = 60.0
+    """The watchdog stops the process (exit code 1, the container restarts from the checkpoint)
+    when the consumer has not read for this long (wall seconds); 0 disables it."""
+    engine_loop_max_failures: int = 20
+    """A loop (timers, pdm, commit, control) that fails this many times in a row ends its task,
+    which stops the process with exit code 1."""
+    engine_watch_s: float = 1.0
+    """Watchdog period: consumer-group lag refresh and the stalled-consumer check."""
     health_port: int = 8120
