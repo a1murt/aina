@@ -550,7 +550,8 @@ async def test_advice_uses_the_levers(
     )
     assert [n for n, _ in ran] == ["get_levers"]
     assert res.text.startswith("Цель завода 5 500 при текущем темпе недостижима")
-    assert "Нужно ещё 7 доп. смен (17.10, 18.10)" in res.text
+    assert "нужно 7 доп. смен (17.10, 18.10) — тогда 100\u00a0%" in res.text
+    assert "План линии" not in res.text  # 5 500 was asked: only the plant target
     assert "Доп. смена 17.10 (1 смена): +116 авто" in res.text
     assert "≈ 69,7 млн ₸" in res.text
 
@@ -564,6 +565,19 @@ async def test_advice_for_a_master_falls_back_to_the_bottleneck(
     assert not res.refused
     assert "get_levers" not in [n for n, _ in ran]
     assert res.text.startswith("Больше всего выпуск ограничивает линия Окраска-1")
+
+
+async def test_advice_on_the_plan_names_both_targets(
+    cfg: TwinConfig, ran: list[tuple[str, dict[str, Any]]]
+) -> None:
+    res = await OfflineCopilot(cfg).answer(
+        "Что посоветуешь, чтобы выполнить план?", toolbox(cfg), TODAY
+    )
+    assert res.text.startswith(
+        "План линии 4\u00a0800 при текущем темпе под угрозой: вероятность 18\u00a0%"
+    )
+    assert "хватит 1 доп. смены (17.10) — тогда 100\u00a0%" in res.text
+    assert "Цель завода 5\u00a0500 при текущем темпе недостижима" in res.text
 
 
 async def test_compare_two_areas_in_one_answer(

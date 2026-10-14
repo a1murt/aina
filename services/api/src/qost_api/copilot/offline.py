@@ -692,49 +692,15 @@ class OfflineCopilot:
         base = r.get("base") or {}
         needed: dict[str, dict[str, Any]] = r.get("shifts_needed_for_target") or {}
         p_reach: dict[str, float] = base.get("p_reach") or {}
-        targets = {t: next(iter(v.values()))["qty"] for t, v in needed.items() if v}
         if re.search(r"\b5 ?500\b|\bцел", c.q) and "plant_target" in p_reach:
-            target = "plant_target"
+            order = ["plant_target"]
         elif re.search(r"\b4 ?800\b|план\w* лини", c.q) and "line_plan" in p_reach:
-            target = "line_plan"
-        else:
-            open_targets = [t for t in p_reach if p_reach[t] < 0.5]
-            target = open_targets[0] if open_targets else next(iter(p_reach), "plant_target")
-        p = float(p_reach.get(target, 0.0))
-        qty = targets.get(target)
-        tname = f"{tx.label(tx.TARGET_RU, target).capitalize()} {tx.num(qty)}" if qty else "План"
-        fem = target == "plant_target"  # «цель» is feminine, «план» masculine
-        shortfall = (base.get("expected_shortfall") or {}).get(target)
-        if p >= 0.9:
-            sure = "гарантирована" if fem else "гарантирован"
-            verdict = f"{tname} почти {sure}: вероятность {tx.pct(p, 0)}."
-        else:
-            hard = ("недостижима" if fem else "недостижим") if p < 0.05 else "под угрозой"
-            verdict = (
-                f"{tname} при текущем темпе {hard}: "
-                f"вероятность {tx.pct(p, 0)}"
-                + (f", ожидаемый недобор {tx.cars(shortfall)}" if shortfall else "")
-                + "."
-            )
-            options = [
-                s
-                for s in (needed.get(target) or {}).values()
-                if s.get("shifts") is not None and s["shifts"] > 0
-            ]
-            if options:
-                best = min(options, key=lambda s: s["shifts"])
-                days = ", ".join(dict.fromkeys(tx.ddmm(d["date"]) for d in best.get("dates") or []))
-                n = int(best["shifts"])
-                verdict += (
-                    f" Нужно ещё {n} доп. {tx.plural(n, 'смена', 'смены', 'смен')}"
-                    + (f" ({days})" if days else "")
-                    + f" — тогда вероятность {tx.pct(best.get('p_reach') or 0.0, 0)}."
-                )
-            elif needed.get(target):
-                p_max = max(float(s.get("p_max") or 0.0) for s in needed[target].values())
-                verdict += (
-                    f" Даже все доступные доп. смены месяца дают не больше {tx.pct(p_max, 0)}."
-                )
+            order = ["line_plan"]
+        else:  # "выполнить план": the line plan first, then the plant target
+            order = sorted(p_reach, key=lambda t: t != "line_plan")
+        sentences = [self._target_verdict(t, base, needed) for t in order]
+        verdict = " ".join(x for x in sentences if x)
+        target = order[0] if order else "plant_target"
         bullets = []
         levers = sorted(r.get("levers") or [], key=lambda lv: lv.get("rank", 99))
         for lv in [lv for lv in levers if lv.get("top")][:4] or levers[:3]:
@@ -748,6 +714,44 @@ class OfflineCopilot:
         if bullets:
             bullets.insert(0, "Лучшие рычаги (прогноз до конца месяца):")
         return _Block(verdict, bullets)
+
+    def _target_verdict(
+        self, target: str, base: dict[str, Any], needed: dict[str, dict[str, Any]]
+    ) -> str:
+        """One sentence per target: the probability, then the extra shifts that reach it."""
+        p = float((base.get("p_reach") or {}).get(target, 0.0))
+        sets = needed.get(target) or {}
+        first: dict[str, Any] = next(iter(sets.values()), {})
+        qty = first.get("qty")
+        tname = f"{tx.label(tx.TARGET_RU, target).capitalize()} {tx.num(qty)}" if qty else "План"
+        fem = target == "plant_target"  # «цель» is feminine, «план» masculine
+        if p >= 0.9:
+            sure = "гарантирована" if fem else "гарантирован"
+            return f"{tname} почти {sure}: вероятность {tx.pct(p, 0)}."
+        hard = ("недостижима" if fem else "недостижим") if p < 0.05 else "под угрозой"
+        shortfall = (base.get("expected_shortfall") or {}).get(target)
+        text = f"{tname} при текущем темпе {hard}: вероятность {tx.pct(p, 0)}" + (
+            f", недобор {tx.cars(shortfall)}" if shortfall and float(shortfall) >= 1 else ""
+        )
+        options = [s for s in sets.values() if s.get("shifts") is not None and s["shifts"] > 0]
+        if options:
+            best = min(options, key=lambda s: s["shifts"])
+            days = ", ".join(dict.fromkeys(tx.ddmm(d["date"]) for d in best.get("dates") or []))
+            n = int(best["shifts"])
+            return (
+                text
+                + (
+                    "; хватит 1 доп. смены"
+                    if n == 1
+                    else f"; нужно {n} доп. {tx.plural(n, 'смена', 'смены', 'смен')}"
+                )
+                + (f" ({days})" if days else "")
+                + f" — тогда {tx.pct(best.get('p_reach') or 0.0, 0)}."
+            )
+        if sets:
+            p_max = max(float(s.get("p_max") or 0.0) for s in sets.values())
+            return text + f"; даже все доп. смены месяца дают не больше {tx.pct(p_max, 0)}."
+        return text + "."
 
     def _lever_text(self, lv: dict[str, Any]) -> str:
         kind, p = lv.get("kind"), lv.get("params") or {}
