@@ -46,6 +46,9 @@ MAX_BLOCKS = 3
 MAX_BULLETS = 8
 MIN_LOSS_MIN = 1.0
 """Loss categories below a minute are noise in a spoken answer."""
+RISK_UNITS = 3
+"""Units of the risk answer with a health call each: 2 alert calls + 3 = the 5-call budget."""
+_SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
 B = "• "
 
 TOOL_RU = {
@@ -1315,43 +1318,58 @@ class OfflineCopilot:
         lim = await c.call("get_alerts", {"status": "open", "rule_id": "AL-M2"})
         if pdm is None and lim is None:
             return None
-        units = list(dict.fromkeys(i["entity"] for i in (pdm or {}).get("items") or []))
+        # one entry per unit, the most severe alert first, then by code: the list itself is
+        # newest first and a re-raised AL-M1 moves up, so its order changes from run to run
+        worst: dict[str, int] = {}
+        for item in (pdm or {}).get("items") or []:
+            level = _SEVERITY_RANK.get(str(item.get("severity")), len(_SEVERITY_RANK))
+            worst[item["entity"]] = min(worst.get(item["entity"], level), level)
+        units = sorted(worst, key=lambda u: (worst[u], u))
         limits = (lim or {}).get("items") or []
-        bullets: list[str] = []
-        risky: list[str] = []
-        for code in units[:2]:
+        found: list[tuple[float, str, dict[str, Any]]] = []
+        for code in units[:RISK_UNITS]:
             h = (
                 await c.call("get_equipment_health", {"code": code})
                 if code in self.cfg.equipment
                 else None
             )
             pred = (h or {}).get("prediction")
-            if pred:
-                risky.append(
-                    f"{self._full(code)} — {tx.pct(pred['p_failure'], 0)} "
-                    f"за {tx.num(pred['horizon_h'])} ч"
-                )
-                text = (
-                    f"{self._full(code)}: вероятность отказа {tx.pct(pred['p_failure'], 0)} "
-                    f"за {tx.num(pred['horizon_h'])} ч, "
-                    f"индекс здоровья {tx.num(pred.get('health_index'))}"
-                )
-                if pred.get("factors"):
-                    text += "; причины: " + "; ".join(pred["factors"][:2])
-                bullets.append(text + ".")
-            else:
-                risky.append(self._full(code))
-        for code in units[2:5]:
-            risky.append(self._full(code))
+            if pred and pred.get("p_failure") is not None:
+                found.append((float(pred["p_failure"]), code, pred))
+        # the headline: every unit with its probability, the most likely failure first
+        found.sort(key=lambda x: (-x[0], x[1]))
+        risky = [
+            f"{self._full(code)} — {tx.pct(p, 0)} за {tx.num(pred['horizon_h'])} ч"
+            for p, code, pred in found
+        ]
+        bullets: list[str] = []
+        for p, code, pred in found[:2]:
+            text = (
+                f"{self._full(code)}: вероятность отказа {tx.pct(p, 0)} "
+                f"за {tx.num(pred['horizon_h'])} ч, "
+                f"индекс здоровья {tx.num(pred.get('health_index'))}"
+            )
+            if pred.get("factors"):
+                text += "; причины: " + "; ".join(pred["factors"][:2])
+            bullets.append(text + ".")
         for item in limits[:3]:
             bullets.append(
                 f"{tx.label(tx.SEVERITY_RU, item['severity']).capitalize()}: {item['message_ru']}"
             )
-        if risky:
+        if units:
             n = len(units)
+            # no prediction row behind an open AL-M1 (not expected): the names alone
+            shown = risky or [self._full(code) for code in units[:RISK_UNITS]]
+            rest = n - len(shown)
             verdict = (
                 f"В зоне риска {n} {tx.plural(n, 'единица', 'единицы', 'единиц')} оборудования: "
-                + ", ".join(risky)
+                + ", ".join(shown)
+                + (
+                    f" и ещё {rest} {tx.plural(rest, 'единица', 'единицы', 'единиц')} "
+                    "(в ленте оповещений)"
+                    if rest
+                    else ""
+                )
                 + ". Рекомендация — обслужить в ближайшую пересменку."
             )
         elif limits:

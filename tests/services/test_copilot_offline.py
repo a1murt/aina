@@ -793,3 +793,77 @@ async def test_losses_answer_is_the_tile_figure_and_names_the_weights(
         text
     )
     assert ("get_losses", {"from": "2026-10-01", "to": "2026-10-16", "level": "plant"}) in ran
+
+
+async def test_risk_headline_gives_every_unit_its_probability_in_a_fixed_order(
+    cfg: TwinConfig, ran: list[tuple[str, dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stand run r1 vs r2: «…CONV-01 — 92 %, Робот ABB-01 — 71 %, Робот ABB-04.» and «…ABB-04 —
+    100 %, Робот ABB-01.» — the third unit had no percentage and the order followed the alert
+    list (newest first, a re-raised AL-M1 moves up). Now: by p desc, ties by code, all with p."""
+    p = {"CONV-01": 0.92, "ABB-01": 0.71, "ABB-04": 0.995, "ABB-02": 0.71}
+    sev = {"CONV-01": "critical", "ABB-01": "warning", "ABB-04": "critical", "ABB-02": "warning"}
+
+    def alerts(units: list[str]) -> list[dict[str, Any]]:
+        return [
+            {**ALERT, "rule_id": "AL-M1", "severity": sev[u], "entity": u, "message_ru": u}
+            for u in units
+        ]
+
+    order: list[str] = []
+
+    async def get_alerts(self: Toolbox, a: dict[str, Any]) -> Any:
+        items = alerts(order) if a.get("rule_id") == "AL-M1" else []
+        return {"items": items, "open_counts": {}, "more": False}
+
+    async def get_health(self: Toolbox, a: dict[str, Any]) -> Any:
+        body = _health(a["code"])
+        body["prediction"] = {
+            "horizon_h": 8.0,
+            "p_failure": p[a["code"]],
+            "health_index": 40.0,
+            "factors": [],
+        }
+        return body
+
+    monkeypatch.setattr(Toolbox, "_get_alerts", get_alerts)
+    monkeypatch.setattr(Toolbox, "_get_equipment_health", get_health)
+    bot = OfflineCopilot(cfg)
+    q = "Какое оборудование в зоне риска?"
+
+    heads = set()
+    for order[:] in (
+        ["CONV-01", "ABB-01", "ABB-04"],
+        ["ABB-04", "CONV-01", "ABB-01"],
+        ["ABB-01", "ABB-04", "CONV-01", "ABB-04"],  # a unit twice (two open AL-M1)
+    ):
+        res = await bot.answer(q, toolbox(cfg), TODAY)
+        assert len(res.calls) <= 5
+        heads.add(res.text.split("\n")[0])
+    assert len(heads) == 1, heads
+    head = heads.pop()
+    assert head.startswith("В зоне риска 3 единицы оборудования: "), head
+    listed = re.findall(r"([A-Z]+-\d+)\)? — (\d+)\s%", head)
+    assert listed == [("ABB-04", "100"), ("CONV-01", "92"), ("ABB-01", "71")], head
+
+    # four units: the three with a health call (critical first, then by code) are listed with
+    # their probability, the fourth is counted; equal p are ordered by code
+    order[:] = ["ABB-02", "ABB-01", "CONV-01", "ABB-04"]
+    res = await bot.answer(q, toolbox(cfg), TODAY)
+    head = res.text.split("\n")[0]
+    assert len(res.calls) <= 5
+    assert head.startswith("В зоне риска 4 единицы оборудования: "), head
+    assert re.findall(r"([A-Z]+-\d+)\)? — (\d+)\s%", head) == [
+        ("ABB-04", "100"),
+        ("CONV-01", "92"),
+        ("ABB-01", "71"),
+    ], head
+    assert "и ещё 1 единица" in head
+
+    order[:] = ["ABB-02", "CONV-01", "ABB-01"]  # equal p: by code
+    res = await bot.answer(q, toolbox(cfg), TODAY)
+    assert re.findall(r"([A-Z]+-\d+)\)? — (\d+)\s%", res.text.split("\n")[0]) == [
+        ("CONV-01", "92"),
+        ("ABB-01", "71"),
+        ("ABB-02", "71"),
+    ]
