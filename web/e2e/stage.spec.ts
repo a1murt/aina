@@ -16,9 +16,9 @@ async function login(page: Page, user: string, next?: string): Promise<void> {
   await page.waitForURL((u) => !u.pathname.startsWith("/login"));
 }
 
-/** Every percentage shown inside `root` (e.g. "100,0 %", "87 %"). */
+/** Every percentage shown by the matched elements (e.g. "100,0 %", "87 %"); SVG text included. */
 async function percentages(page: Page, selector: string): Promise<number[]> {
-  const texts = await page.locator(selector).allInnerTexts();
+  const texts = await page.locator(selector).allTextContents();
   return texts.flatMap((t) => [...t.matchAll(/(-?\d+(?:,\d+)?)\s*%/g)].map((m) => Number((m[1] ?? "0").replace(",", "."))));
 }
 
@@ -76,7 +76,7 @@ async function percentages(page: Page, selector: string): Promise<number[]> {
     await page.goto("/live");
     await expect(page.getByTestId("line-kpis")).toBeVisible();
     await page.waitForTimeout(2_000);
-    const shown = [...(await percentages(page, '[data-testid="line-kpis"]')), ...(await percentages(page, '[data-testid^="area-oee-"]'))];
+    const shown = [...(await percentages(page, '[data-testid="line-kpis"]')), ...(await percentages(page, '[data-testid^="area-oee-"] tspan'))];
     expect(shown.length).toBeGreaterThan(0);
     for (const v of shown) expect(v).toBeLessThanOrEqual(100);
     // a clamped value carries the raw estimate in its tooltip
