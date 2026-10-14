@@ -1,12 +1,22 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 /**
  * a terminal toast that goes away, an honest connection badge, KPI never above 100 %, one open
  * stop for one chain break, labels that fit, a header without clipping, safe login redirect.
  * Runs after p0.spec.ts against the same `make demo` stack (S1 is injected there); actions that
- * would write are answered locally by page.route where the test is about the UI only.
+ * would write are answered locally by page.route where the test is about the UI only. Live KPI
+ * need a running plant: beforeAll presses «Пуск» (no reset, idempotent when already running), so
+ * the suite also passes on a paused stand and leaves the simulator running.
  */
 const PASSWORD = process.env.DEMO_PASSWORD ?? "qost2026";
+
+async function startPlant(request: APIRequestContext): Promise<void> {
+  const login = await request.post("/api/v1/auth/login", { data: { username: "admin", password: PASSWORD } });
+  expect(login.ok()).toBeTruthy();
+  const { access_token } = (await login.json()) as { access_token: string };
+  const res = await request.post("/api/v1/sim/start", { data: {}, headers: { Authorization: `Bearer ${access_token}` } });
+  expect(res.ok(), await res.text()).toBeTruthy();
+}
 
 async function login(page: Page, user: string, next?: string): Promise<void> {
   await page.goto(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
@@ -21,6 +31,10 @@ async function percentages(page: Page, selector: string): Promise<number[]> {
   const texts = await page.locator(selector).allTextContents();
   return texts.flatMap((t) => [...t.matchAll(/(-?\d+(?:,\d+)?)\s*%/g)].map((m) => Number((m[1] ?? "0").replace(",", "."))));
 }
+
+  test.beforeAll(async ({ request }) => {
+    await startPlant(request);
+  });
 
   test("what-if keeps the focus: a typed decimal stays whole (FE-1)", async ({ page }) => {
     await login(page, "director");

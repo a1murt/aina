@@ -3,7 +3,8 @@ import { defineConfig, devices } from "@playwright/test";
 /**
  * T-E2E (SPEC §16) against a running `make demo` stack: web on E2E_BASE_URL (default
  * http://localhost:3000, the compose `web` service), API through its /api proxy.
- * The scenarios share one plant, so they run serially in one worker.
+ * The scenarios share one plant, so they run serially in one worker. They work on a paused stand
+ * (p0 resets, sets ×10 and starts it; stage starts it) and leave the simulator running: before a
  */
 export default defineConfig({
   testDir: "./e2e",
