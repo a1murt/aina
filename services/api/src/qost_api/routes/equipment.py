@@ -17,6 +17,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import text
 
 from qost_api.auth import AnyUser
@@ -113,7 +114,7 @@ async def get_health(
         try:
             raw = await redis.hget(live_keys(request.app.state.settings).key("equipment"), code)
             live = json.loads(raw) if raw else None
-        except (OSError, ConnectionError):
+        except (OSError, ConnectionError, RedisError):
             live = None
     line = cfg.line_of_equipment(code)
     return {

@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from qost_api.auth import AnyUser
 from qost_api.db import Session
@@ -92,7 +93,7 @@ async def _records(
     if include_live and redis is not None:
         try:
             views = await read_views(redis, live_keys(request.app.state.settings))
-        except (OSError, ConnectionError):  # the live part is best effort
+        except (OSError, ConnectionError, RedisError):  # the live part is best effort
             views = {}
         known = {(r.line, r.day, r.shift) for r in records}
         records += live_line_shifts(views.get("lines") or {}, lines, d0, d1, known)
