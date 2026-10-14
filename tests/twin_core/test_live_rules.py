@@ -24,7 +24,13 @@ from twin_core.events import (
     ulid_timestamp,
 )
 from twin_core.live import LiveKeys, build_snapshot, envelope, read_snapshot
-from twin_core.rules import AL_BUFFER, AL_CKD_COVERAGE, AL_EQUIPMENT_STOP, AlertEvaluator
+from twin_core.rules import (
+    AL_BUFFER,
+    AL_CKD_COVERAGE,
+    AL_EQUIPMENT_STOP,
+    Alert,
+    AlertEvaluator,
+)
 
 TS = datetime(2026, 10, 16, 2, 31, 12, 123000, tzinfo=UTC)
 DAY = date(2026, 10, 16)
@@ -342,3 +348,19 @@ async def test_live_snapshot_contract(cfg: TwinConfig) -> None:
     keys = LiveKeys("t:live:", "t:live")
     assert keys.key("lines") == "t:live:lines"
     assert len(keys.all) == 9
+
+
+def test_alert_numbers_follow_the_ru_format(cfg: TwinConfig) -> None:
+    """VIS-8: no-break space before % and as the thousands separator; P as a whole percent."""
+    nb = " "
+    p1 = Alert(
+        "AL-P1", "warning", "site", "PLANT", DAY, {"p": 0.1874, "target_qty": 4800, "p50": 4512}
+    )
+    assert alert_message_ru(p1, cfg) == (
+        f"Вероятность выполнить план месяца 19{nb}% (цель 4{nb}800 авто, 16.10.2026), "
+        f"медианный прогноз 4{nb}512 авто"
+    )
+    q1 = Alert("AL-Q1", "critical", "area", "PAINT", DAY, 0.0517, "A")
+    assert alert_message_ru(q1, cfg) == (
+        f"Окраска: брак 5,17{nb}% (16.10.2026, смена A), норма 2{nb}%"
+    )

@@ -43,6 +43,19 @@ def pct(value: float) -> str:
     return f"{value * 100:.2f}".rstrip("0").rstrip(".").replace(".", ",")
 
 
+NBSP = "\u00a0"
+
+
+def pct_text(value: float) -> str:
+    """Percent for alert texts: ``5,17 %`` (no-break space before the sign, as on the tiles)."""
+    return f"{pct(value)}{NBSP}%"
+
+
+def qty(value: float) -> str:
+    """Whole number with no-break-space thousands: ``4 800``."""
+    return f"{round(value):,d}".replace(",", NBSP)
+
+
 def num(value: float, digits: int | None = None) -> str:
     """Number with a decimal comma (``g`` format, or ``digits`` decimals)."""
     text = f"{value:g}" if digits is None else f"{value:.{digits}f}"
@@ -113,10 +126,10 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
     value = alert.value
     if alert.rule_id == AL_DEFECT_RATE and isinstance(value, float):
         name = cfg.areas[alert.entity].name_ru
-        return f"{name}: брак {pct(value)}% ({when}), норма {pct(t.defect_rate_limit)}%"
+        return f"{name}: брак {pct_text(value)} ({when}), норма {pct_text(t.defect_rate_limit)}"
     if alert.rule_id in (AL_OEE_BELOW, AL_OEE_NEAR) and isinstance(value, float):
         name = cfg.lines[alert.entity].name_ru
-        return f"{name}: OEE {pct(value)}% ({when}), цель {pct(t.oee_target)}%"
+        return f"{name}: OEE {pct_text(value)} ({when}), цель {pct_text(t.oee_target)}"
     if alert.rule_id == AL_DOWNTIME_LIMIT and isinstance(value, float):
         name = cfg.equipment[alert.entity].name_ru
         return (
@@ -124,7 +137,9 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
             f"лимит {num(t.critical_downtime_limit_min_per_day)} мин в сутки"
         )
     if alert.rule_id == AL_SYSTEMIC_DEFECTS and isinstance(value, dict):
-        parts = ", ".join(f"{cfg.areas[area].name_ru} {pct(rate)}%" for area, rate in value.items())
+        parts = ", ".join(
+            f"{cfg.areas[area].name_ru} {pct_text(rate)}" for area, rate in value.items()
+        )
         return f"Брак вырос на всех участках ({when}): {parts}"
     if alert.rule_id == AL_EQUIPMENT_STOP and isinstance(value, dict):
         name = cfg.equipment[alert.entity].name_ru
@@ -157,11 +172,11 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
     if alert.rule_id == AL_PLAN_RISK and isinstance(value, dict):
         p = float(value.get("p", 0.0))
         text = (
-            f"Вероятность выполнить план месяца {pct(p)}% "
-            f"(цель {num(float(value.get('target_qty', 0)), 0)} авто, {when})"
+            f"Вероятность выполнить план месяца {round(p * 100)}{NBSP}% "
+            f"(цель {qty(float(value.get('target_qty', 0)))} авто, {when})"
         )
         if "p50" in value:
-            text += f", медианный прогноз {num(float(value['p50']), 0)} авто"
+            text += f", медианный прогноз {qty(float(value['p50']))} авто"
         return text
     if alert.rule_id in (AL_ANDON, AL_MATERIAL_CALL) and isinstance(value, dict):
         line = cfg.lines.get(alert.entity)
@@ -198,7 +213,7 @@ def pdm_text_ru(cfg: TwinConfig, equipment: str, value: dict[str, Any]) -> str:
     p = float(value.get("p_failure", 0.0))
     text = (
         f"{name}: вероятность отказа в ближайшие {num(float(value.get('horizon_h', 0)), 0)} ч — "
-        f"{pct(p)}% (индекс здоровья {num(float(value.get('health_index', 0)), 0)})"
+        f"{pct_text(p)} (индекс здоровья {num(float(value.get('health_index', 0)), 0)})"
     )
     factors = [str(f) for f in value.get("factors_ru") or []]
     if factors:
@@ -246,13 +261,14 @@ def _spc_text(alert: Alert, value: dict[str, Any], cfg: TwinConfig, when: str) -
     words = "; ".join(f"правило {r} — {SPC_RULES_RU.get(r, '')}" for r in rules)
     side = "выше" if int(value.get("side", 1)) > 0 else "ниже"
     return (
-        f"{area}: процесс вне статистического контроля ({when}): брак {pct(float(value['p']))}% "
-        f"при среднем {pct(float(value['p_bar']))}% ({side} центральной линии; "
-        f"верхняя граница {pct(float(value['ucl']))}%); {words}"
+        f"{area}: процесс вне статистического контроля ({when}): "
+        f"брак {pct_text(float(value['p']))} при среднем {pct_text(float(value['p_bar']))} "
+        f"({side} центральной линии; верхняя граница {pct_text(float(value['ucl']))}); {words}"
     )
 
 
 __all__ = [
+    "NBSP",
     "SPC_RULES_RU",
     "alert_message_ru",
     "alert_title_ru",
@@ -263,6 +279,8 @@ __all__ = [
     "num",
     "open_stop_rate",
     "pct",
+    "pct_text",
     "pdm_text_ru",
+    "qty",
     "rate_text",
 ]
