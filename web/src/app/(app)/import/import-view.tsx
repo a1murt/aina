@@ -1,30 +1,39 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CircleX, Download, FileSpreadsheet, Loader2, Table2, Timer, UploadCloud } from "lucide-react";
+import { CheckCircle2, CircleX, Download, FileSpreadsheet, History, Loader2, RefreshCw, Table2, Timer, UploadCloud } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useRef, useState, type DragEvent } from "react";
+import { useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from "react";
 
-import { usePlant } from "@/components/plant-context";
+import { usePlant, type Plant } from "@/components/plant-context";
+import { ErrorDetails } from "@/components/query-state";
 import { SeverityBadge, SeverityIcon } from "@/components/state-badge";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { downloadFile, getToken } from "@/lib/api/client";
-import type { ImportReport } from "@/lib/api/types";
+import { ApiError, downloadFile, getClaims, getToken, NetworkError } from "@/lib/api/client";
+import { useErrorMessage } from "@/lib/api/errors";
+import type { ImportReport, Severity } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 const ACCEPT = ".docx,.xlsx,.csv,.zip";
+/** Roles of POST /api/v1/import?reanalyse=true (the roles of the import itself). */
+const REANALYSE_ROLES = ["admin", "director"];
+/** Statuses of an API build without `reanalyse`: the button hides and the stored result stays. */
+const REANALYSE_UNSUPPORTED = [404, 405, 422];
 
-type Phase = { kind: "idle" } | { kind: "upload"; pct: number } | { kind: "analyse" } | { kind: "error"; title: string; problems: string[] };
+type Phase =
+  | { kind: "idle" }
+  | { kind: "upload"; pct: number; reanalyse: boolean }
+  | { kind: "analyse"; reanalyse: boolean }
+  | { kind: "error"; title: string; detail: string | null; problems: string[] };
 
 /** multipart upload with progress (fetch has no upload progress). */
-function upload(files: File[], onProgress: (pct: number) => void): Promise<{ status: number; body: unknown }> {
+function upload(files: File[], reanalyse: boolean, onProgress: (pct: number) => void): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     for (const f of files) form.append("files", f, f.name);
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/v1/import");
+    xhr.open("POST", reanalyse ? "/api/v1/import?reanalyse=true" : "/api/v1/import");
     const token = getToken();
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.setRequestHeader("Accept", "application/json");
@@ -38,44 +47,82 @@ function upload(files: File[], onProgress: (pct: number) => void): Promise<{ sta
       }
       resolve({ status: xhr.status, body });
     };
-    xhr.onerror = () => reject(new Error("network"));
+    xhr.onerror = () => reject(new NetworkError("upload failed"));
     xhr.send(form);
   });
+}
+
+/** Problem document of a failed upload as an {@link ApiError} (same shape as `api()` throws). */
+function problemOf(status: number, body: unknown): ApiError {
+  const p = (body ?? {}) as { type?: string; title?: string; detail?: string };
+  const slug = (typeof p.type === "string" && p.type.split("/").pop()) || `http-${status}`;
+  return new ApiError(status, slug, p.title ?? "", typeof p.detail === "string" ? p.detail : "");
+}
+
+/** Stored duration of the analysis (contract (a)); older API builds do not send it. */
+function analysisMs(r: ImportReport): number | null {
+  const v = r.analysis_ms ?? r.job.analysis_ms;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 /** /import — drag-and-drop of the case files and the «audit in 10 seconds» report (US-1, §7.4). */
 export function ImportView() {
   const t = useTranslations("import");
-  const plant = usePlant();
   const qc = useQueryClient();
+  const describe = useErrorMessage();
   const input = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [report, setReport] = useState<ImportReport | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [reanalyseOff, setReanalyseOff] = useState(false);
+  const busy = phase.kind === "upload" || phase.kind === "analyse";
+  const role = getClaims()?.role ?? "";
 
-  async function start(list: FileList | File[] | null) {
-    const files = Array.from(list ?? []);
-    if (!files.length) return;
+  async function start(list: FileList | File[] | null, reanalyse = false) {
+    const picked = Array.from(list ?? []);
+    if (!picked.length || busy) return;
     const t0 = performance.now();
+    const previous = report;
     setReport(null);
-    setPhase({ kind: "upload", pct: 0 });
+    setPhase({ kind: "upload", pct: 0, reanalyse });
+    const keepPrevious = () => {
+      setReanalyseOff(true);
+      setReport(previous);
+      setPhase({ kind: "idle" });
+    };
     try {
-      const res = await upload(files, (pct) => setPhase(pct >= 100 ? { kind: "analyse" } : { kind: "upload", pct }));
+      const res = await upload(picked, reanalyse, (pct) => setPhase(pct >= 100 ? { kind: "analyse", reanalyse } : { kind: "upload", pct, reanalyse }));
       if (res.status === 200 || res.status === 201) {
-        setReport(res.body as ImportReport);
+        const body = res.body as ImportReport;
+        // An API build without `reanalyse` ignores the parameter and returns the stored result.
+        if (reanalyse && body?.reanalysed !== true) return keepPrevious();
+        setFiles(picked);
+        setReport(body);
         setElapsed((performance.now() - t0) / 1000);
         setPhase({ kind: "idle" });
-        void qc.invalidateQueries();
+        if (!reanalyse) void qc.invalidateQueries();
         return;
       }
-      const p = (res.body ?? {}) as { title?: string; detail?: string; problems?: Array<{ msg?: string; message?: string } | string> };
-      const problems = (p.problems ?? []).map((x) => (typeof x === "string" ? x : (x.msg ?? x.message ?? JSON.stringify(x))));
-      setPhase({ kind: "error", title: res.status === 403 ? t("forbidden") : p.detail || p.title || `HTTP ${res.status}`, problems });
-    } catch {
-      setPhase({ kind: "error", title: t("network"), problems: [] });
+      if (reanalyse && REANALYSE_UNSUPPORTED.includes(res.status)) return keepPrevious();
+      const err = problemOf(res.status, res.body);
+      const e = describe(err);
+      const raw = (res.body ?? {}) as { problems?: Array<{ msg?: string; message?: string } | string> };
+      const problems = (raw.problems ?? []).map((x) => (typeof x === "string" ? x : (x.msg ?? x.message ?? JSON.stringify(x))));
+      setPhase({ kind: "error", title: res.status === 403 ? t("forbidden") : e.text, detail: e.detail, problems });
+    } catch (err) {
+      const e = describe(err instanceof NetworkError ? err : new NetworkError(String(err)));
+      setPhase({ kind: "error", title: e.text, detail: null, problems: [] });
     }
   }
+
+  const onPick = (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    // Reset so that picking the same file again fires `change` (DEMO-9).
+    e.target.value = "";
+    void start(picked);
+  };
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
@@ -83,7 +130,8 @@ export function ImportView() {
     void start(e.dataTransfer.files);
   };
 
-  const busy = phase.kind === "upload" || phase.kind === "analyse";
+  const canReanalyse = !!report && files.length > 0 && !reanalyseOff && REANALYSE_ROLES.includes(role) && analysisMs(report) !== null;
+  const reanalysing = (phase.kind === "upload" || phase.kind === "analyse") && phase.reanalyse;
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-4 p-4" data-testid="import">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -101,9 +149,10 @@ export function ImportView() {
         role="button"
         tabIndex={0}
         aria-label={t("drop")}
+        aria-busy={busy}
         data-testid="dropzone"
         onClick={() => !busy && input.current?.click()}
-        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && input.current?.click()}
+        onKeyDown={(e) => !busy && (e.key === "Enter" || e.key === " ") && input.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
           setDrag(true);
@@ -118,7 +167,9 @@ export function ImportView() {
       >
         {busy ? <Loader2 aria-hidden className="size-10 animate-spin text-muted-foreground" /> : <UploadCloud aria-hidden className="size-10 text-muted-foreground" />}
         <div>
-          <p className="text-lg font-medium">{busy ? (phase.kind === "analyse" ? t("analysing") : t("uploading")) : t("drop")}</p>
+          <p className="text-lg font-medium">
+            {busy ? (phase.kind === "analyse" ? (reanalysing ? t("reanalysing") : t("analysing")) : t("uploading")) : t("drop")}
+          </p>
           <p className="text-sm text-muted-foreground">{t("formats")}</p>
         </div>
         {phase.kind === "upload" || phase.kind === "analyse" ? (
@@ -126,7 +177,7 @@ export function ImportView() {
             <div className={cn("h-full rounded-full bg-primary transition-all", phase.kind === "analyse" && "animate-pulse")} style={{ width: `${phase.kind === "upload" ? phase.pct : 100}%` }} />
           </div>
         ) : null}
-        <input ref={input} type="file" accept={ACCEPT} multiple hidden data-testid="file-input" onChange={(e) => void start(e.target.files)} />
+        <input ref={input} type="file" accept={ACCEPT} multiple hidden data-testid="file-input" onChange={onPick} />
       </div>
 
       {phase.kind === "error" ? (
@@ -142,33 +193,65 @@ export function ImportView() {
               ))}
             </ul>
           ) : null}
+          <ErrorDetails detail={phase.detail} className="mt-1 text-muted-foreground" />
         </div>
       ) : null}
 
-      {report ? <Report report={report} elapsed={elapsed} /> : null}
-      {!report && phase.kind === "idle" ? <p className="text-center text-sm text-muted-foreground">{t("hint", { site: plant.name(plant.assets?.site) })}</p> : null}
+      {report ? (
+        <Report
+          report={report}
+          elapsed={elapsed}
+          reanalyse={
+            canReanalyse ? (
+              <Button variant="outline" size="sm" onClick={() => void start(files, true)} disabled={busy} title={t("reanalyseHint")} data-testid="import-reanalyse">
+                <RefreshCw aria-hidden />
+                {t("reanalyse")}
+              </Button>
+            ) : null
+          }
+        />
+      ) : null}
+      {!report && phase.kind === "idle" ? <p className="text-center text-sm text-muted-foreground">{t("hint")}</p> : null}
     </div>
   );
 }
 
 // ------------------------------------------------------------------ report
 
-function useExplain() {
+/** Configured value of a constraint the report was checked against (rules.yaml via the API). */
+function limitOf(report: ImportReport, key: string): number | null {
+  const c = report.constraint_checks.find((x) => x.key === key);
+  const v = c?.configured ?? c?.value ?? report.constraints_parsed[key];
+  return typeof v === "number" ? v : null;
+}
+
+/** Percent of a ratio with as many digits as it needs (0.02 → «2 %», 0.025 → «2,5 %»). */
+function pctAuto(plant: Plant, r: number | null): string {
+  if (r == null) return plant.fmt.pct(null);
+  const p = r * 100;
+  return plant.fmt.pct(r, Math.abs(p - Math.round(p)) < 1e-9 ? 0 : Math.abs(p * 10 - Math.round(p * 10)) < 1e-9 ? 1 : 2);
+}
+
+/** Constraints that are ratios (shown in %); the others are counts, hours and minutes. */
+const RATIO_CONSTRAINTS = new Set(["oee_target", "defect_rate_limit"]);
+
+const n = (v: unknown) => (typeof v === "number" ? v : Number(v));
+
+function useExplain(report: ImportReport) {
   const ta = useTranslations("import.alertText");
   const td = useTranslations("import.dqText");
   const plant = usePlant();
-  const n = (v: unknown) => (typeof v === "number" ? v : Number(v));
   const alert = (a: ImportReport["alerts"][number]): string => {
     const entity = plant.entityName(a.entity);
     const date = a.date ? plant.fmt.date(a.date) : "";
     switch (a.rule_id) {
       case "AL-Q1":
-        return ta("AL-Q1", { entity, date, value: plant.fmt.pct(n(a.value), 2) });
+        return ta("AL-Q1", { entity, date, value: plant.fmt.pct(n(a.value), 2), limit: pctAuto(plant, limitOf(report, "defect_rate_limit")) });
       case "AL-O1":
       case "AL-O2":
-        return ta(a.rule_id, { entity, date, value: plant.fmt.pct(n(a.value), 1) });
+        return ta(a.rule_id, { entity, date, value: plant.fmt.pct(n(a.value), 1), limit: pctAuto(plant, limitOf(report, "oee_target")) });
       case "AL-D1":
-        return ta("AL-D1", { entity, date, value: plant.fmt.int(n(a.value)) });
+        return ta("AL-D1", { entity, date, value: plant.fmt.int(n(a.value)), limit: plant.fmt.int(limitOf(report, "critical_downtime_limit_min_per_day")) });
       case "AL-Q3": {
         const v = (a.value ?? {}) as Record<string, number>;
         return ta("AL-Q3", { list: Object.entries(v).map(([k, x]) => `${plant.entityName(k)} ${plant.fmt.pct(x, 2)}`).join(", ") });
@@ -205,14 +288,130 @@ function useExplain() {
   return { alert, dq };
 }
 
-function Report({ report, elapsed }: { report: ImportReport; elapsed: number | null }) {
+interface Headline {
+  key: string;
+  severity: Severity;
+  label: string;
+  value: string;
+  note: string;
+}
+
+const SEV_RANK: Record<Severity, number> = { critical: 0, warning: 1, info: 2 };
+const worstSeverity = (xs: Severity[]): Severity => xs.reduce<Severity>((w, x) => (SEV_RANK[x] < SEV_RANK[w] ? x : w), "info");
+
+/** The four numbers a director remembers (VIS-11): worst defect, critical downtime, log mismatches, plan gap. */
+function useHeadlines(report: ImportReport): Headline[] {
+  const t = useTranslations("import.hero");
+  const plant = usePlant();
+  const worst = (rule: string) =>
+    report.alerts
+      .filter((a) => a.rule_id === rule && typeof a.value === "number")
+      .sort((a, b) => n(b.value) - n(a.value))[0];
+  const out: Headline[] = [];
+  const defect = worst("AL-Q1");
+  if (defect) {
+    out.push({
+      key: "defect",
+      severity: defect.severity,
+      label: t("defect", { entity: plant.entityName(defect.entity) }),
+      value: plant.fmt.pct(n(defect.value), 2),
+      note: t("defectNote", { limit: pctAuto(plant, limitOf(report, "defect_rate_limit")), date: plant.fmt.dayMonth(defect.date) }),
+    });
+  }
+  const down = worst("AL-D1");
+  if (down) {
+    out.push({
+      key: "downtime",
+      severity: down.severity,
+      label: t("downtime", { entity: plant.entityName(down.entity) }),
+      value: t("downtimeValue", { value: plant.fmt.int(n(down.value)), limit: plant.fmt.int(limitOf(report, "critical_downtime_limit_min_per_day")) }),
+      note: t("downtimeNote", { date: plant.fmt.dayMonth(down.date) }),
+    });
+  }
+  const journal = report.data_quality_issues.filter((d) => d.rule_id === "DQ-02");
+  if (journal.length) {
+    out.push({
+      key: "journal",
+      severity: worstSeverity(journal.map((d) => d.severity)),
+      label: t("journal"),
+      value: t("journalValue", { n: journal.length }),
+      note: t("journalNote", { min: plant.fmt.int(journal.reduce((s, d) => s + Math.abs(n(d.details.diff_min) || 0), 0)) }),
+    });
+  }
+  if (report.plan.gap) {
+    const dq05 = report.data_quality_issues.find((d) => d.rule_id === "DQ-05");
+    out.push({
+      key: "plan",
+      severity: dq05?.severity ?? "warning",
+      label: t("plan"),
+      value: t("planValue", { gap: plant.fmt.signed(report.plan.gap, 0).replace("-", "\u2212") }),
+      note: t("planNote", { line: plant.fmt.int(report.plan.line_model_total), target: plant.fmt.int(report.plan.plant_target) }),
+    });
+  }
+  return out;
+}
+
+const SEV_BORDER: Record<Severity, string> = {
+  critical: "border-l-severity-critical",
+  warning: "border-l-severity-warning",
+  info: "border-l-severity-info",
+};
+
+function Headlines({ items }: { items: Headline[] }) {
+  const t = useTranslations("import.hero");
+  if (!items.length) return null;
+  return (
+    <section aria-label={t("title")} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" data-testid="import-headlines">
+      {items.map((h) => (
+        <div key={h.key} className={cn("rounded-lg border border-l-4 bg-card px-4 py-3", SEV_BORDER[h.severity])} data-testid={`import-headline-${h.key}`}>
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <SeverityIcon severity={h.severity} className="size-3.5 shrink-0" />
+            <span className="line-clamp-2 min-w-0" title={h.label}>
+              {h.label}
+            </span>
+          </p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">{h.value}</p>
+          <p className="text-xs text-muted-foreground">{h.note}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** «Аудит за N с» for a fresh parse; «Результат от ДД.ММ ЧЧ:ММ, разбор N с» for a stored one. */
+function ResultLine({ report, elapsed }: { report: ImportReport; elapsed: number | null }) {
+  const t = useTranslations("import.report");
+  const plant = usePlant();
+  const ms = analysisMs(report);
+  const secs = (x: number) => plant.fmt.num(x, x < 0.1 ? 2 : 1);
+  const fresh = report.reanalysed === true || report.job.created === true;
+  if (fresh) {
+    const s = ms != null ? ms / 1000 : elapsed;
+    if (s == null) return null;
+    return (
+      <span className="ml-auto flex items-center gap-1.5 font-semibold tabular-nums" data-testid="import-elapsed">
+        <Timer aria-hidden className="size-4" />
+        {t(report.reanalysed ? "reanalysed" : "elapsed", { s: secs(s) })}
+      </span>
+    );
+  }
+  const when = plant.fmt.dateShort(report.job.created_ts);
+  return (
+    <span className="ml-auto flex items-center gap-1.5 text-muted-foreground tabular-nums" title={t("cachedHint")} data-testid="import-cached">
+      <History aria-hidden className="size-4" />
+      {ms != null ? t("cachedWithTime", { when, s: secs(ms / 1000) }) : t("cached", { when })}
+    </span>
+  );
+}
+
+function Report({ report, elapsed, reanalyse }: { report: ImportReport; elapsed: number | null; reanalyse: ReactNode }) {
   const t = useTranslations("import.report");
   const tc = useTranslations("import.constraint");
   const plant = usePlant();
-  const explain = useExplain();
-  const sevOrder = { critical: 0, warning: 1, info: 2 } as const;
-  const alerts = [...report.alerts].sort((a, b) => sevOrder[a.severity] - sevOrder[b.severity]);
-  const dq = [...report.data_quality_issues].sort((a, b) => sevOrder[a.severity] - sevOrder[b.severity]);
+  const explain = useExplain(report);
+  const headlines = useHeadlines(report);
+  const alerts = [...report.alerts].sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity]);
+  const dq = [...report.data_quality_issues].sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity]);
   const lineToArea = new Map(report.shift_reports.map((r) => [r.line, r.area]));
   return (
     <div className="flex flex-col gap-4" data-testid="import-report">
@@ -225,14 +424,11 @@ function Report({ report, elapsed }: { report: ImportReport; elapsed: number | n
           {t("period", { from: plant.fmt.date(report.meta.period.from), to: plant.fmt.date(report.meta.period.to) })}
         </span>
         <span className="text-muted-foreground">{t("kind", { kind: report.meta.kind.toUpperCase() })}</span>
-        {!report.job.created ? <Badge tone="neutral">{t("repeat")}</Badge> : null}
-        {elapsed != null ? (
-          <span className="ml-auto flex items-center gap-1.5 font-semibold tabular-nums" data-testid="import-elapsed">
-            <Timer aria-hidden className="size-4" />
-            {t("elapsed", { s: plant.fmt.num(elapsed, elapsed < 1 ? 2 : 1) })}
-          </span>
-        ) : null}
+        <ResultLine report={report} elapsed={elapsed} />
+        {reanalyse}
       </div>
+
+      <Headlines items={headlines} />
 
       {/* findings: the «audit in 10 seconds» */}
       <div className="grid gap-4 lg:grid-cols-2">
@@ -366,8 +562,8 @@ function Report({ report, elapsed }: { report: ImportReport; elapsed: number | n
                 {report.constraint_checks.map((c) => (
                   <tr key={c.key} className="border-b last:border-b-0">
                     <td className="py-1.5">{tc(c.key as "oee_target")}</td>
-                    <td className="py-1.5 text-right">{plant.fmt.num(c.value, 2)}</td>
-                    <td className="py-1.5 text-right">{plant.fmt.num(c.configured, 2)}</td>
+                    <td className="py-1.5 text-right">{RATIO_CONSTRAINTS.has(c.key) ? pctAuto(plant, c.value) : plant.fmt.num(c.value, 1)}</td>
+                    <td className="py-1.5 text-right">{RATIO_CONSTRAINTS.has(c.key) ? pctAuto(plant, c.configured) : plant.fmt.num(c.configured, 1)}</td>
                     <td className="py-1.5 pl-2 text-right">
                       {c.matches ? (
                         <CheckCircle2 aria-label={t("matches")} className="ml-auto size-4 text-muted-foreground" />

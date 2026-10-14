@@ -8,7 +8,9 @@ import { useState, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
-import { api, ApiError } from "@/lib/api/client";
+import { ErrorDetails } from "@/components/query-state";
+import { api } from "@/lib/api/client";
+import { useErrorMessage } from "@/lib/api/errors";
 import type { CopilotAnswer } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -17,7 +19,18 @@ export const COPILOT_ROLES = ["director", "master", "maintenance", "quality"];
 interface Turn {
   q: string;
   a?: CopilotAnswer;
-  error?: string;
+  error?: { text: string; detail: string | null };
+}
+
+/** Tool name → chip label key (`copilot.tool.*`); unknown tools fall back to a readable name. */
+function useToolLabel(): (name: string) => string {
+  const t = useTranslations("copilot.tool");
+  return (name) => {
+    const key = name.replace(/^get_/, "");
+    if (t.has(key as "kpi")) return t(key as "kpi");
+    if (/lever|what_?if/.test(key)) return t("levers");
+    return key.replace(/_/g, " ");
+  };
 }
 
 /** Copilot slide-out (SPEC §11.4): questions in plain words, visible tool calls and the basis line. */
@@ -38,6 +51,8 @@ export function CopilotButton() {
 function CopilotPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const t = useTranslations("copilot");
   const locale = useLocale();
+  const describe = useErrorMessage();
+  const toolLabel = useToolLabel();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [q, setQ] = useState("");
   const ask = useMutation({
@@ -46,7 +61,7 @@ function CopilotPanel({ open, onClose }: { open: boolean; onClose: () => void })
     onSuccess: (a, question) => setTurns((ts) => ts.map((x) => (x.q === question && !x.a && !x.error ? { ...x, a } : x))),
     onError: (err, question) =>
       setTurns((ts) =>
-        ts.map((x) => (x.q === question && !x.a && !x.error ? { ...x, error: err instanceof ApiError ? err.detail || err.title : String(err) } : x)),
+        ts.map((x) => (x.q === question && !x.a && !x.error ? { ...x, error: describe(err) } : x)),
       ),
   });
   const send = (question: string) => {
@@ -108,19 +123,22 @@ function CopilotPanel({ open, onClose }: { open: boolean; onClose: () => void })
           <div key={i} className="flex flex-col gap-2">
             <p className="self-end rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">{turn.q}</p>
             {turn.error ? (
-              <p className="flex items-start gap-1.5 text-sm text-severity-critical">
+              <div className="flex items-start gap-1.5 text-sm text-severity-critical">
                 <XCircle aria-hidden className="mt-0.5 size-4 shrink-0" />
-                {turn.error}
-              </p>
+                <div className="min-w-0">
+                  <p>{turn.error.text}</p>
+                  <ErrorDetails detail={turn.error.detail} className="text-muted-foreground" />
+                </div>
+              </div>
             ) : turn.a ? (
               <div className="rounded-lg border bg-card p-3 text-sm">
                 {turn.a.tool_calls.length ? (
                   <ul className="mb-2 flex flex-wrap gap-1.5" aria-label={t("tools")}>
                     {turn.a.tool_calls.map((c, j) => (
                       <li key={j}>
-                        <Badge tone={c.ok ? "outline" : "critical"} title={JSON.stringify(c.arguments)}>
+                        <Badge tone={c.ok ? "outline" : "critical"} title={`${c.name} ${JSON.stringify(c.arguments)}`}>
                           <Wrench aria-hidden />
-                          {c.name}
+                          {toolLabel(c.name)}
                           {c.ok ? <CheckCircle2 aria-hidden /> : <XCircle aria-hidden />}
                         </Badge>
                       </li>
@@ -129,7 +147,12 @@ function CopilotPanel({ open, onClose }: { open: boolean; onClose: () => void })
                 ) : null}
                 <p className={cn("whitespace-pre-line", turn.a.refused && "text-muted-foreground")}>{turn.a.answer}</p>
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  {t("meta", { mode: turn.a.mode, n: turn.a.tool_calls.length, limit: turn.a.tool_limit, ms: turn.a.duration_ms })}
+                  {t("meta", {
+                    mode: turn.a.mode === "llm" && turn.a.model ? t("modeModel", { model: turn.a.model }) : t("modeOffline"),
+                    n: turn.a.tool_calls.length,
+                    limit: turn.a.tool_limit,
+                    ms: turn.a.duration_ms,
+                  })}
                 </p>
               </div>
             ) : (
