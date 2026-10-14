@@ -478,7 +478,7 @@
     "shift": "Смена",
     "speed": "Скорость",
     "demoStart": "Начало демо",
-    "seed": "Seed",
+    "seed": "Зерно (seed)",
     "epoch": "эпоха {n}",
     "lastReset": "Последний сброс",
     "speedTitle": "Скорость времени",
@@ -505,6 +505,14 @@
       "live": "Цех онлайн",
       "tv": "Цех — режим ТВ",
       "operator": "Терминал оператора"
+    },
+    "shiftValue": "{date} · смена {code}",
+    "simState": {
+      "running": "работает",
+      "paused": "пауза",
+      "warming_up": "запускается",
+      "resetting": "сброс",
+      "error": "ошибка"
     }
   },
   "planned": {
@@ -602,7 +610,10 @@
     "bodyPlaceholder": "Номер кузова, например B-000123",
     "find": "Найти",
     "defects": "Дефекты",
-    "noDefects": "Дефектов нет"
+    "noDefects": "Дефектов нет",
+    "shiftKey": "{date} · смена {shift}",
+    "lastShift": "за {shift}",
+    "currentShift": "текущая смена"
   },
   "copilot": {
     "open": "Копилот",
@@ -633,17 +644,20 @@
   },
   "reports": {
     "title": "Рапорты смены",
-    "date": "Дата",
-    "shift": "Смена",
     "generate": "Сформировать рапорт",
     "generating": "Формирую…",
     "print": "Печать",
     "empty": "Рапортов за эту смену пока нет — сформируйте",
     "heading": "Рапорт за {date}, смена {shift}",
-    "meta": "Сформирован {ts} · {by} · модель {model}",
+    "meta": "Сформирован {ts} · {source}",
     "verified": "цифры проверены",
     "notVerified": "цифры не сверены",
-    "draft": "черновик перевода"
+    "draft": "черновик перевода",
+    "pick": "Смена",
+    "pickOption": "{date} · смена {shift} ({start}–{end})",
+    "noClosed": "Закрытых смен за неделю нет",
+    "byTemplate": "по шаблону (офлайн)",
+    "byModel": "модель {model}"
   },
   "errors": {
     "validation": "Проверьте введённые данные",

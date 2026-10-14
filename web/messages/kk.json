@@ -477,7 +477,7 @@
     "shift": "Ауысым",
     "speed": "Жылдамдық",
     "demoStart": "Демо басы",
-    "seed": "Seed",
+    "seed": "Тұқым (seed)",
     "epoch": "дәуір {n}",
     "lastReset": "Соңғы қалпына келтіру",
     "speedTitle": "Уақыт жылдамдығы",
@@ -504,6 +504,14 @@
       "live": "Цех онлайн",
       "tv": "Цех — ТВ режимі",
       "operator": "Оператор терминалы"
+    },
+    "shiftValue": "{date} · {code} ауысымы",
+    "simState": {
+      "running": "жұмыс істеп тұр",
+      "paused": "үзіліс",
+      "warming_up": "іске қосылуда",
+      "resetting": "қалпына келтіру",
+      "error": "қате"
     }
   },
   "planned": {
@@ -601,7 +609,10 @@
     "bodyPlaceholder": "Шанақ нөмірі, мысалы B-000123",
     "find": "Табу",
     "defects": "Ақаулар",
-    "noDefects": "Ақау жоқ"
+    "noDefects": "Ақау жоқ",
+    "shiftKey": "{date} · {shift} ауысымы",
+    "lastShift": "{shift} бойынша",
+    "currentShift": "ағымдағы ауысым"
   },
   "copilot": {
     "open": "Копилот",
@@ -632,17 +643,20 @@
   },
   "reports": {
     "title": "Ауысым рапорттары",
-    "date": "Күні",
-    "shift": "Ауысым",
     "generate": "Рапорт құру",
     "generating": "Құрып жатырмын…",
     "print": "Басып шығару",
     "empty": "Бұл ауысым бойынша рапорт әлі жоқ — құрыңыз",
     "heading": "{date} рапорты, {shift} ауысым",
-    "meta": "{ts} құрылды · {by} · модель {model}",
+    "meta": "{ts} құрылды · {source}",
     "verified": "сандар тексерілді",
     "notVerified": "сандар тексерілмеген",
-    "draft": "аударма жобасы"
+    "draft": "аударма жобасы",
+    "pick": "Ауысым",
+    "pickOption": "{date} · {shift} ауысымы ({start}–{end})",
+    "noClosed": "Апта ішінде жабылған ауысым жоқ",
+    "byTemplate": "үлгі бойынша (офлайн)",
+    "byModel": "модель {model}"
   },
   "errors": {
     "validation": "Енгізілген деректерді тексеріңіз",
