@@ -28,7 +28,13 @@ from qost_api.problems import ProblemError
 from qost_api.queries.kpi import line_shifts
 from twin_core.alert_text import SPC_RULES_RU, num
 from twin_core.config import TwinConfig
-from twin_core.correlations import HourStat, band_center, defect_correlations
+from twin_core.correlations import (
+    ALPHA,
+    MIN_ABS_RHO,
+    HourStat,
+    band_center,
+    defect_correlations,
+)
 from twin_core.events import FIRST_EXIT_RESULTS
 from twin_core.spc import BASELINE_SHIFTS, Subgroup, p_chart
 
@@ -306,6 +312,42 @@ def correlation_factors(cfg: TwinConfig, area: str) -> list[dict[str, Any]]:
     return out
 
 
+def correlation_text(
+    area_name: str,
+    factor_name: str,
+    *,
+    rho: float,
+    p_value: float,
+    n: int,
+    direction: int,
+    insight: bool,
+    alpha: float = ALPHA,
+    min_abs_rho: float = MIN_ABS_RHO,
+) -> tuple[str, str]:
+    """``(strength, text)`` of a correlation card, three levels (WIN-15):
+
+    * ``none`` — p ≥ alpha: no link;
+    * ``weak`` — significant (p < alpha) but |ρ| below the alert threshold: a weak link;
+    * ``strong`` — |ρ| ≥ threshold and p < alpha (the insight that raises the card).
+    """
+    p_text = "< 0,001" if p_value < 0.001 else f"= {num(round(p_value, 3))}"
+    rho_text = f"ρ = {num(round(rho, 2))}"
+    if insight:
+        verb = "растёт" if direction > 0 else "снижается"
+        return "strong", (
+            f"брак ({area_name}) {verb} вместе с фактором «{factor_name}»: "
+            f"{rho_text}, p {p_text}, {n} ч наблюдений"
+        )
+    if p_value < alpha and abs(rho) < min_abs_rho:
+        return "weak", (
+            f"слабая связь брака ({area_name}) с фактором «{factor_name}»: {rho_text} — "
+            f"значима (p {p_text}), но ниже порога {num(min_abs_rho)} для оповещения; {n} ч"
+        )
+    return "none", (
+        f"связи брака ({area_name}) с фактором «{factor_name}» нет ({rho_text}, p {p_text}, {n} ч)"
+    )
+
+
 @router.get("/correlations", summary="Spearman ρ of the hourly defect rate vs process factors")
 async def get_correlations(
     principal: Quality,
@@ -376,14 +418,14 @@ async def get_correlations(
     for res in results:
         f = meta[res.factor]
         step = max(1, len(res.points) // MAX_SCATTER)
-        verb = "растёт" if res.direction > 0 else "снижается"
-        p_text = "< 0,001" if res.p_value < 0.001 else f"= {num(round(res.p_value, 3))}"
-        text_ru = (
-            f"брак ({area_name}) {verb} вместе с фактором «{f['name_ru']}»: "
-            f"ρ = {num(round(res.rho, 2))}, p {p_text}, {res.n} ч наблюдений"
-            if res.insight
-            else f"связь брака ({area_name}) с фактором «{f['name_ru']}» не обнаружена "
-            f"(ρ = {num(round(res.rho, 2))}, p {p_text}, {res.n} ч)"
+        strength, text_ru = correlation_text(
+            area_name,
+            f["name_ru"],
+            rho=res.rho,
+            p_value=res.p_value,
+            n=res.n,
+            direction=res.direction,
+            insight=res.insight,
         )
         insights.append(
             {
@@ -394,6 +436,7 @@ async def get_correlations(
                 "p_value": res.p_value,
                 "n": res.n,
                 "insight": res.insight,
+                "strength": strength,
                 "direction": res.direction,
                 "text_ru": text_ru,
                 "points": [[round(x, 3), round(y, 4)] for x, y in res.points[::step]],
