@@ -7,9 +7,9 @@ services are reached by their compose names):
 
 Checks: /readyz or /healthz of sim, collector, engine, api, notifier, web; the engine reads the
 event stream (``processed`` grows over a few seconds while the plant runs, consumer-group lag 0
-while it is paused); the collector spool is empty; the plant clock is fresh and, before the show,
-paused at ``demo_start``; the engine has acknowledged the simulator's reset epoch; the month has a
-plan and MTD is within tolerance.
+while it is paused); the collector spool is empty and its queue drains (sampled over ~2 s); the
+plant clock is fresh and, before the show, paused at ``demo_start``; the engine has acknowledged
+the simulator's reset epoch; the month has a plan and MTD is within tolerance.
 
 Service URLs: ``DEMO_CHECK_<SIM|COLLECTOR|ENGINE|API|NOTIFIER|WEB>_URL``; Redis: ``REDIS_URL``.
 """
@@ -23,7 +23,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
@@ -144,15 +144,50 @@ def check_engine(
     return out
 
 
-def check_collector(status: Mapping[str, str] | None) -> Line:
-    if not status:
+def _num(status: Mapping[str, str], key: str) -> int:
+    try:
+        return int(status.get(key, "0") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def check_collector(samples: Sequence[Mapping[str, str] | None], waited_s: float = 0.0) -> Line:
+    """``collector:status`` read a few times over ``waited_s`` (it is rewritten every 0.25 s).
+    Right after a reset (or on a running plant) the collector may still be writing a batch, so a
+    non-empty queue alone is not a fault: FAIL only for a non-empty spool or a queue that never
+    empties and does not shrink while nothing is written."""
+    seen = [s for s in samples if s]
+    if not seen:
         return warn("collector", "нет collector:status в Redis")
-    queued, spooled = int(status.get("queued", "0") or 0), int(status.get("spooled", "0") or 0)
-    if queued or spooled:
+    first, last = seen[0], seen[-1]
+    queued = [_num(s, "queued") for s in seen]
+    spooled = _num(last, "spooled")
+    if spooled:
         return fail(
-            "collector", f"в очереди {queued}, в спуле {spooled} — запись в БД/Redis отстаёт"
+            "collector",
+            f"в очереди {queued[-1]}, в спуле {spooled} — запись в БД/Redis отстаёт",
         )
-    return ok("collector", "очередь и спул пусты")
+    if min(queued) == 0:
+        return ok("collector", "очередь и спул пусты")
+    window = f"за {waited_s:.0f} с" if waited_s >= 0.5 else "в одном замере"
+    if queued[-1] < queued[0]:
+        return ok(
+            "collector", f"очередь разгружается: {queued[0]} → {queued[-1]} {window}, спул пуст"
+        )
+    written = sum(_num(last, k) - _num(first, k) for k in ("db_written", "stream_written"))
+    if written > 0 and queued[-1] == queued[0]:
+        return ok("collector", f"в очереди {queued[-1]}, запись идёт (+{written} {window})")
+    if written > 0:
+        return warn(
+            "collector",
+            f"очередь растёт: {queued[0]} → {queued[-1]} {window}, запись идёт (+{written}) — "
+            "повторить через 3 с",
+        )
+    return fail(
+        "collector",
+        f"очередь не разгружается: {queued[0]} → {queued[-1]} {window}, записей нет — "
+        "запись в БД/Redis отстаёт",
+    )
 
 
 def check_clock(
@@ -299,6 +334,27 @@ def api_progress(user: str, password: str | None) -> Mapping[str, Any] | None:
     return progress if status == 200 and isinstance(progress, dict) else None
 
 
+def collector_samples(
+    read: Callable[[], Mapping[str, str] | None],
+    *,
+    window_s: float,
+    every_s: float = 0.5,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> tuple[list[Mapping[str, str] | None], float]:
+    """``collector:status`` read every ``every_s`` for up to ``window_s``; stops at the first
+    sample with an empty queue and spool. Returns the samples and the time they span."""
+    t0 = monotonic()
+    samples = [read()]
+    while monotonic() - t0 + every_s <= window_s + 1e-9:
+        last = samples[-1]
+        if last and not _num(last, "queued") and not _num(last, "spooled"):
+            break
+        sleep(every_s)
+        samples.append(read())
+    return samples, monotonic() - t0
+
+
 def run(args: argparse.Namespace, now: Callable[[], datetime]) -> list[Line]:
     lines: list[Line] = []
     with ThreadPoolExecutor(max_workers=len(SERVICES)) as pool:
@@ -313,13 +369,18 @@ def run(args: argparse.Namespace, now: Callable[[], datetime]) -> list[Line]:
     sim = sim if isinstance(sim, dict) else None
     redis = redis_client()
     clock: Mapping[str, Any] | None = None
-    collector: Mapping[str, str] | None = None
+    collector: list[Mapping[str, str] | None] = []
+    sampled = 0.0
     if redis is not None:
         try:
             raw = redis.get("plant:clock")
             clock = json.loads(raw) if raw else None
-            status = redis.hgetall("collector:status")
-            collector = {k.decode(): v.decode() for k, v in status.items()}
+
+            def read_collector() -> Mapping[str, str]:
+                status = redis.hgetall("collector:status")
+                return {k.decode(): v.decode() for k, v in status.items()}
+
+            collector, sampled = collector_samples(read_collector, window_s=args.collector_s)
         except Exception as exc:
             lines.append(fail("redis", f"недоступен: {str(exc)[:80]}"))
     running = bool(sim) and not sim.get("paused", True)
@@ -334,7 +395,7 @@ def run(args: argparse.Namespace, now: Callable[[], datetime]) -> list[Line]:
     before = before if isinstance(before, dict) else None
     after = after if isinstance(after, dict) else None
     lines += check_engine(running, before, after, group_lag(redis), waited)
-    lines.append(check_collector(collector))
+    lines.append(check_collector(collector, sampled))
     lines += check_clock(sim, clock, now(), max_drift_h=args.max_drift_h)
     lines.append(check_epoch(sim, after))
     at_start = bool(sim) and not running and sim.get("plant_time") is not None
@@ -355,6 +416,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wait-s", type=float, default=5.0, help="engine progress window")
     parser.add_argument(
         "--max-drift-h", type=float, default=10.0, help="plant time past demo_start"
+    )
+    parser.add_argument(
+        "--collector-s", type=float, default=2.0, help="collector queue sampling window"
     )
     parser.add_argument("--mtd-expect", type=float, default=None, help="MTD output at demo_start")
     parser.add_argument("--mtd-tol", type=float, default=0.02, help="relative MTD tolerance")
