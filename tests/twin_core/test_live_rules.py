@@ -360,6 +360,10 @@ def test_alert_numbers_follow_the_ru_format(cfg: TwinConfig) -> None:
         f"Вероятность выполнить план месяца 19{nb}% (цель 4{nb}800 авто, 16.10.2026), "
         f"медианный прогноз 4{nb}512 авто"
     )
+    half = Alert("AL-P1", "warning", "site", "PLANT", DAY, {"p": 0.125, "target_qty": 4800.5})
+    assert alert_message_ru(half, cfg).startswith(  # halves up, as Intl on the tiles
+        f"Вероятность выполнить план месяца 13{nb}% (цель 4{nb}801 авто"
+    )
     q1 = Alert("AL-Q1", "critical", "area", "PAINT", DAY, 0.0517, "A")
     assert alert_message_ru(q1, cfg) == (
         f"Окраска: брак 5,17{nb}% (16.10.2026, смена A), норма 2{nb}%"

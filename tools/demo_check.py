@@ -103,7 +103,11 @@ def check_engine(
     after: Mapping[str, Any] | None,
     group_lag: int | None,
     waited_s: float,
+    *,
+    fresh_s: float = 10.0,
 ) -> list[Line]:
+    """``processed`` counts non-telemetry events only: at 1x-10x a healthy engine may see none
+    in ``waited_s``, so lag 0 with a fresh XREADGROUP (``last_consume_age_s``) also passes."""
     if before is None or after is None:
         return [fail("engine", f"/stats недоступен — {RESTART_ENGINE}")]
     out: list[Line] = []
@@ -113,8 +117,16 @@ def check_engine(
     p0, p1 = int(before.get("processed") or 0), int(after.get("processed") or 0)
     lag = group_lag if group_lag is not None else after.get("group_lag")
     if sim_running:
+        age = after.get("last_consume_age_s")
         if p1 > p0:
             out.append(ok("engine", f"читает поток: +{p1 - p0} событий за {waited_s:.0f} с"))
+        elif lag is not None and int(lag) == 0 and age is not None and float(age) <= fresh_s:
+            out.append(
+                ok(
+                    "engine",
+                    f"поток прочитан (лаг 0, чтение {float(age):.0f} с назад), новых событий нет",
+                )
+            )
         else:
             out.append(
                 fail(
@@ -249,7 +261,9 @@ def redis_client() -> Any:
     except ImportError:
         return None
     return Redis.from_url(
-        os.environ.get("REDIS_URL", "redis://redis:6379/0"), socket_timeout=3, socket_connect_timeout=3
+        os.environ.get("REDIS_URL", "redis://redis:6379/0"),
+        socket_timeout=3,
+        socket_connect_timeout=3,
     )
 
 
@@ -326,7 +340,9 @@ def run(args: argparse.Namespace, now: Callable[[], datetime]) -> list[Line]:
     at_start = bool(sim) and not running and sim.get("plant_time") is not None
     if at_start and sim is not None:
         demo, plant = parse_ts(sim.get("demo_start")), parse_ts(sim.get("plant_time"))
-        at_start = demo is not None and plant is not None and abs((plant - demo).total_seconds()) <= 60
+        at_start = (
+            demo is not None and plant is not None and abs((plant - demo).total_seconds()) <= 60
+        )
     progress = api_progress(args.user, os.environ.get("DEMO_PASSWORD"))
     lines.append(
         check_plan(progress, at_start=at_start, mtd_expect=args.mtd_expect, mtd_tol=args.mtd_tol)
@@ -337,7 +353,9 @@ def run(args: argparse.Namespace, now: Callable[[], datetime]) -> list[Line]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="demo_check", description=__doc__.split("\n")[0])
     parser.add_argument("--wait-s", type=float, default=5.0, help="engine progress window")
-    parser.add_argument("--max-drift-h", type=float, default=10.0, help="plant time past demo_start")
+    parser.add_argument(
+        "--max-drift-h", type=float, default=10.0, help="plant time past demo_start"
+    )
     parser.add_argument("--mtd-expect", type=float, default=None, help="MTD output at demo_start")
     parser.add_argument("--mtd-tol", type=float, default=0.02, help="relative MTD tolerance")
     parser.add_argument("--user", default="director", help="API user for /plan/progress")

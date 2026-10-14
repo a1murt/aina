@@ -303,6 +303,34 @@ async def test_stalled_consumer_stops_the_service(cfg: TwinConfig) -> None:
     assert any(r["event"] == "consume_stalled" for r in logs)
 
 
+async def test_redis_outage_is_not_a_stall_ready_503_but_no_exit(cfg: TwinConfig) -> None:
+    """A Redis outage keeps the process alive (no restart back-off); /readyz reports it."""
+    # the loop retries every 0.5 s on an error: exit_s must be above that (60 s in production)
+    svc, _clock = make_service(
+        cfg, FakeRedis(), engine_consume_exit_s=0.8, engine_consume_stale_s=0.2
+    )
+    real = svc.redis.xreadgroup
+
+    async def down(*_a: Any, **_k: Any) -> Any:
+        await asyncio.sleep(0.005)
+        raise RedisConnectionError("Connection refused")
+
+    run = asyncio.create_task(svc.run())
+    try:
+        await wait_for(lambda: svc.is_ready())
+        svc.redis.xreadgroup = down  # type: ignore[method-assign]
+        await asyncio.sleep(2.0)  # far past exit_s + 3 watchdog strikes
+        assert not run.done()
+        ready, reasons = svc.health()
+        assert not ready
+        assert any(r.startswith("consume_stale") for r in reasons)
+        svc.redis.xreadgroup = real  # type: ignore[method-assign]
+        await wait_for(lambda: svc.is_ready())
+    finally:
+        svc.stopping.set()
+        assert await asyncio.wait_for(run, timeout=5) == 0
+
+
 async def test_redis_errors_do_not_kill_the_loops(cfg: TwinConfig) -> None:
     assert issubclass(RedisConnectionError, REDIS_ERRORS)
     assert issubclass(ResponseError, REDIS_ERRORS)

@@ -48,7 +48,8 @@ class EngineSettings(BaseSettings):
     the engine is neither resetting nor holding back for a full write-behind buffer."""
     engine_consume_exit_s: float = 60.0
     """The watchdog stops the process (exit code 1, the container restarts from the checkpoint)
-    when the consumer has not read for this long (wall seconds); 0 disables it."""
+    when the consume loop has not come back from XREADGROUP for this long (wall seconds, a hung
+    await); handled Redis errors keep it alive, so an outage is ridden out; 0 disables it."""
     engine_loop_max_failures: int = 20
     """A loop (timers, pdm, commit, control) that fails this many times in a row ends its task,
     which stops the process with exit code 1."""

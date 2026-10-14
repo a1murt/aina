@@ -161,6 +161,10 @@ class EngineService:
         self.backpressure = False
         self.last_consume_wall: float | None = None
         """``time.monotonic()`` of the last XREADGROUP that returned (with or without entries)."""
+        self.consume_loop_wall: float | None = None
+        """``time.monotonic()`` of the last consume iteration that finished an XREADGROUP call,
+        a handled Redis error included: the watchdog exits only on a hung await, not on a
+        Redis outage (``/readyz`` still answers 503 from :attr:`last_consume_wall`)."""
         self.group_lag: int | None = None
         self.group_pending: int | None = None
         self.loop_errors: dict[str, int] = dict.fromkeys(TASKS, 0)
@@ -330,11 +334,13 @@ class EngineService:
                 if "NOGROUP" in str(exc):
                     with contextlib.suppress(*REDIS_ERRORS):
                         await self._ensure_group()
+                    self.consume_loop_wall = time.monotonic()
                     continue
                 log.warning("redis_unavailable", error=str(exc))
+                self.consume_loop_wall = time.monotonic()
                 await asyncio.sleep(0.5)
                 continue
-            self.last_consume_wall = time.monotonic()
+            self.last_consume_wall = self.consume_loop_wall = time.monotonic()
             entries = resp[0][1] if resp else []
             if pending_phase and not entries:
                 pending_phase = False
@@ -694,10 +700,13 @@ class EngineService:
             return None
         return time.monotonic() - self.last_consume_wall
 
-    def _consume_stalled(self, limit_s: float) -> bool:
+    def _consume_stalled(self, limit_s: float, *, loop: bool = False) -> bool:
+        """The consumer has not read for ``limit_s`` (``loop``: the consume loop itself has not
+        come back from an XREADGROUP call, errors included, i.e. a hung await)."""
         if self.paused or self.backpressure or limit_s <= 0:
             return False
-        age = self.consume_age_s()
+        wall = self.consume_loop_wall if loop else self.last_consume_wall
+        age = None if wall is None else time.monotonic() - wall
         return age is not None and age > limit_s
 
     def health(self) -> tuple[bool, list[str]]:
@@ -762,7 +771,7 @@ class EngineService:
             # a long synchronous step (the loop itself was blocked) is not a stalled consumer
             blocked, last = now - last > period + 5.0, now
             await self._refresh_group_lag()
-            if blocked or not self._consume_stalled(self.settings.engine_consume_exit_s):
+            if blocked or not self._consume_stalled(self.settings.engine_consume_exit_s, loop=True):
                 strikes = 0
                 continue
             strikes += 1

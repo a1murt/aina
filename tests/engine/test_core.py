@@ -469,3 +469,83 @@ def test_oee_projection_reissue_parameters(cfg: TwinConfig) -> None:
     params = cfg.rules.engine
     assert params.oee_alert_reissue_delta == pytest.approx(0.01)
     assert params.oee_alert_reissue_min == pytest.approx(5)
+
+
+def test_b1_reactivation_does_not_reuse_a_stale_downgrade_hold(cfg: TwinConfig) -> None:
+    """A downgrade started before a resolve must hold the full debounce after re-activation."""
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    run(core, [buffer("PBS", 0, at(100))])
+    core.advance_to(at(106))
+    assert [a.severity for a in latest_alerts(core.drain()[0]).values()] == ["critical"]
+    run(core, [buffer("PBS", 1, at(107))])  # a lower severity starts holding ...
+    run(core, [buffer("PBS", 15, at(108))])  # ... then the condition clears
+    core.advance_to(at(114))
+    assert [a.status for a in of_type(core.drain()[0], AlertUpsert)] == ["resolved"]
+    run(core, [buffer("PBS", 0, at(115))])
+    # the timer activates critical at 120:00, and the first evaluation after it is a warning
+    effects = run(core, [buffer("PBS", 1, at(120))])
+    assert [a.severity for a in of_type(effects, AlertUpsert)] == ["critical"]
+    core.advance_to(at(124.9))
+    assert not of_type(core.drain()[0], AlertUpsert)  # held: the stale 107 hold is not reused
+    core.advance_to(at(125.1))
+    assert [a.severity for a in of_type(core.drain()[0], AlertUpsert)] == ["warning"]
+
+
+def test_oee_projection_dwell_and_reissue(cfg: TwinConfig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """STAB-6: AL-O1/O2 of the running shift. O1 -> O2 / O1 -> none wait the dwell from the
+    last upsert, O2 -> O1 is at once, the same rule re-issues on dOEE >= delta at most once
+    per oee_alert_reissue_min."""
+    params = cfg.rules.engine
+    assert params.oee_alert_reissue_min == pytest.approx(5)
+    assert params.live_oee_min_elapsed_min == pytest.approx(120)
+    target = cfg.rules.thresholds.oee_target
+    near = target + cfg.rules.thresholds.oee_near_margin_pp / 200  # inside the AL-O2 band
+    core = EngineCore(cfg, mode="live")
+    run(core, start_plant(cfg))
+    core.drain()
+    scripted: dict[str, float | None] = {"oee": None}
+    real = core.evaluator.oee
+
+    def oee(*, line: str, period_date: object, shift: str | None, oee: float | None) -> object:
+        value = scripted["oee"] if line == "WELD-1" else None
+        return real(line=line, period_date=period_date, shift=shift, oee=value)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(core.evaluator, "oee", oee)
+
+    def tick(minute: float, value: float) -> list[tuple[str, str, object]]:
+        scripted["oee"] = value
+        core.live_kpi(at(minute))
+        return [
+            (a.rule_id, a.status, a.value)
+            for a in of_type(core.drain()[0], AlertUpsert)
+            if a.rule_id in ("AL-O1", "AL-O2") and a.entity == "WELD-1"
+        ]
+
+    low = round(target - 0.05, 4)
+    assert tick(121, low) == [("AL-O1", "open", low)]
+    # (2) dOEE >= delta but < 5 min after the upsert; then dOEE < delta after 5 min: no re-issue
+    assert tick(123, round(low - 0.02, 4)) == []
+    assert tick(124, round(low + 0.005, 4)) == []
+    assert tick(127, round(low - 0.005, 4)) == []
+    lower = round(low - 0.02, 4)
+    assert tick(128, lower) == [("AL-O1", "open", lower)]
+    # (1) O1 -> O2 inside the dwell (from the 128 upsert) is held, swaps after it
+    assert tick(130, near) == []
+    assert tick(132.9, near) == []
+    swap = tick(133.5, near)
+    assert sorted(swap, key=lambda r: r[0]) == [
+        ("AL-O1", "resolved", lower),
+        ("AL-O2", "open", near),
+    ]
+    # (3) O2 -> O1 is applied at once
+    worse = tick(134, low)
+    assert sorted(worse, key=lambda r: r[0]) == [
+        ("AL-O1", "open", low),
+        ("AL-O2", "resolved", near),
+    ]
+    # (4) O1 -> no alert resolves only after the dwell
+    good = round(target + 0.05, 4)
+    assert tick(136, good) == []
+    assert tick(138.9, good) == []
+    assert tick(139.5, good) == [("AL-O1", "resolved", low)]

@@ -8,7 +8,9 @@
 #
 #   DEMO_FRESH=1   start from an empty demo database and an empty Redis DB (drops the database
 #                  named in DATABASE_URL and flushes the Redis DB of REDIS_URL — demo data only)
-#   DEMO_SKIP_BUILD=1  reuse the images that exist
+#   DEMO_SKIP_BUILD=1  reuse the images that exist. Not after a change of config/*.yaml keys:
+#                  ./config is mounted live and the config models forbid unknown keys, so an
+#                  old image of ANY Python service (collector included) exits at its next start
 set -euo pipefail
 
 COMPOSE=${COMPOSE:-docker compose}

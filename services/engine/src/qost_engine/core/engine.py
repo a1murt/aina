@@ -1537,6 +1537,7 @@ class EngineCore:
                     cond.active_key, cond.active_token = alert.dedup_key, token
                     cond.pending = None
                     cond.clear_since = None
+                    cond.down_token = cond.down_since = None
                     self._raise(alert, t)
             return
         if token is None or (
@@ -1549,6 +1550,7 @@ class EngineCore:
                 cond.active_key = cond.active_token = None
                 cond.clear_since = None
                 cond.pending, cond.since = None, None
+                cond.down_token = cond.down_since = None
             return
         cond.clear_since = None
         if token == cond.active_token or cond.since is None:

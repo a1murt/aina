@@ -57,6 +57,12 @@ def test_engine_progress_and_lag(dc: ModuleType) -> None:
     frozen = dc.check_engine(True, before, before, 812, 5.0)
     assert frozen[0].status == "FAIL"
     assert "processed не растёт" in frozen[0].text
+    # low speed: no new non-telemetry event, but lag 0 and a fresh read -> healthy
+    idle = {**before, "last_consume_age_s": 0.4}
+    assert dc.check_engine(True, before, idle, 0, 5.0)[0].status == "OK"
+    stale = {**before, "last_consume_age_s": 42.0}
+    assert dc.check_engine(True, before, stale, 0, 5.0)[0].status == "FAIL"
+    assert dc.check_engine(True, before, idle, 3, 5.0)[0].status == "FAIL"
     assert dc.check_engine(False, before, before, 0, 0.0)[0].status == "OK"
     assert dc.check_engine(False, before, before, 40, 0.0)[0].status == "FAIL"
     dead = dc.check_engine(False, before, {**before, "tasks_alive": {"timers": False}}, 0, 0.0)

@@ -5,6 +5,7 @@ Kazakh texts arrive with M8. Numbers use a decimal comma; times are shown in the
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from typing import Any
 
@@ -51,9 +52,15 @@ def pct_text(value: float) -> str:
     return f"{pct(value)}{NBSP}%"
 
 
+def round_half_up(value: float) -> int:
+    """Nearest whole number, halves away from zero as ``Intl.NumberFormat`` on the web tiles
+    (Python ``round`` is banker's: 12.5 -> 12)."""
+    return int(math.copysign(math.floor(abs(value) + 0.5), value))
+
+
 def qty(value: float) -> str:
     """Whole number with no-break-space thousands: ``4 800``."""
-    return f"{round(value):,d}".replace(",", NBSP)
+    return f"{round_half_up(value):,d}".replace(",", NBSP)
 
 
 def num(value: float, digits: int | None = None) -> str:
@@ -172,7 +179,7 @@ def alert_message_ru(alert: Alert, cfg: TwinConfig) -> str:
     if alert.rule_id == AL_PLAN_RISK and isinstance(value, dict):
         p = float(value.get("p", 0.0))
         text = (
-            f"Вероятность выполнить план месяца {round(p * 100)}{NBSP}% "
+            f"Вероятность выполнить план месяца {round_half_up(p * 100)}{NBSP}% "
             f"(цель {qty(float(value.get('target_qty', 0)))} авто, {when})"
         )
         if "p50" in value:
