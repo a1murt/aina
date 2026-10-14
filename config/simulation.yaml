@@ -7,6 +7,7 @@ clock:
   speed_presets: [1, 10, 60, 300]
   backfill_from: "2026-09-01T00:00:00+05:00"  # история для дашбордов, SPC, калибровки
   random_seed: 20261016
+  demo_auto_pause_after_min: 490                # live: пауза в 15:10 (смена A закрыта), стенд не уезжает за октябрь
 
 process:
   cycle_noise: { dist: lognormal, median_factor: 1.02, sigma: 0.02 }   # потеря скорости ~2%

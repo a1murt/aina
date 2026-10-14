@@ -243,3 +243,26 @@ async def test_redis_errors_do_not_stop_the_simulation(cfg: TwinConfig) -> None:
     async with runner._lock:
         await runner._publish_clock()
     assert clock(bus).plant_time == demo + timedelta(minutes=6)
+
+
+async def test_demo_auto_pause_after_the_configured_minutes(cfg: TwinConfig) -> None:
+    """DEMO-11/STAB-7: a stand left running pauses itself (no drift into November)."""
+    after = cfg.simulation.clock.demo_auto_pause_after_min
+    assert after is not None
+    runner, mono, bus = make_runner(cfg)
+    demo = cfg.simulation.clock.demo_start
+    await runner.start_up()
+    await runner.set_speed(300)
+    for _ in range(int(after * 60 / 300 / 5) + 3):  # the pacing loop: advance only while running
+        mono.advance(5.0)
+        async with runner._lock:
+            if runner.state == "running":
+                await runner._advance()
+    assert runner.state == "paused"
+    assert runner.status()["paused"] is True
+    assert runner.plant_time == demo + timedelta(minutes=after)
+    assert clock(bus).paused
+    await runner.start()  # «Пуск» continues past the threshold on demand
+    await advance(runner, mono, 2)
+    assert runner.state == "running"
+    assert runner.plant_time == demo + timedelta(minutes=after + 10)

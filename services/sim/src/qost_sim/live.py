@@ -204,8 +204,23 @@ class LiveRunner:
             log.warning("live_lagging", behind_s=target - limit)
             target = limit
             self.anchor_plant, self.anchor_wall = target, wall
+        stop_at = self._auto_pause_at(model)
+        if stop_at is not None and model.env.now < stop_at <= target:
+            model.run_until(stop_at)
+            await self._publish(model.drain())
+            self.state = "paused"
+            log.info("demo_auto_paused", plant_time=format_utc(model.now))
+            await self._publish_clock(force=True)
+            return
         model.run_until(target)
         await self._publish(model.drain())
+
+    def _auto_pause_at(self, model: PlantModel) -> float | None:
+        """Model seconds of the automatic pause (``clock.demo_auto_pause_after_min``)."""
+        after = self.cfg.simulation.clock.demo_auto_pause_after_min
+        if after is None:
+            return None
+        return model.sec(self.demo_start) + after * 60.0
 
     # ================================================================== publishing
 

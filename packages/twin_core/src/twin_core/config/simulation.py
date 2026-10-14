@@ -49,6 +49,10 @@ class SimClock(StrictModel):
     speed_presets: Annotated[list[PositiveFloat], Field(min_length=1)]
     backfill_from: AwareDatetime
     random_seed: int
+    demo_auto_pause_after_min: PositiveFloat | None = None
+    """Live mode pauses itself when plant time crosses ``demo_start`` + this many minutes (a stand
+    left running must not drift into a month without a plan, DEMO-11); null = never. Pressing
+    «Пуск» afterwards continues; a demo reset arms it again."""
 
     @model_validator(mode="after")
     def _order(self) -> SimClock:
