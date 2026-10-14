@@ -17,7 +17,7 @@ import statistics
 import time
 import uuid
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -584,3 +584,14 @@ def test_downtime_window_skips_imported_stops_of_other_days(
     day = sorted(days)[0]
     same = client.get(f"/api/v1/downtime?from={day}&to={day}&limit=500", headers=director)
     assert [i for i in same.json()["items"] if i["import_id"] is not None]
+
+
+def test_closed_month_output_is_its_total(db: URL, cfg: TwinConfig) -> None:
+    """CONS-22: with the plant clock in November, October is closed — its output is the sum of
+    the daily output, not 0."""
+    later = datetime(2026, 11, 3, 8, 0, tzinfo=UTC)
+    app = create_app(cfg, clock=ManualClock(later), database_url=url_string(db))
+    with TestClient(app) as c:
+        body = c.get("/api/v1/plan/progress?month=2026-10", headers=login(c, "quality")).json()
+    assert body["mtd_output"] > 0
+    assert body["mtd_output"] == body["daily"][-1]["cum_output"]

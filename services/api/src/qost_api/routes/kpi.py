@@ -188,7 +188,11 @@ async def get_plan_progress(
     current = month_of(cfg, now)
     month = month or current
     as_of = now if month == current else _month_end_or_start(cfg, month, now)
-    mtd = await mtd_output(session, cfg, as_of=as_of) if as_of > _month_start(cfg, month) else 0
+    daily = await daily_output(session, cfg, month, as_of=as_of)
+    if month == current:
+        mtd = await mtd_output(session, cfg, as_of=as_of) if as_of > _month_start(cfg, month) else 0
+    else:  # a closed month: its total (CONS-22; mtd_output would count the next month)
+        mtd = sum(daily.values())
     targets = await load_targets(session, cfg, month)
     rows = await plan_rows(session, month)
     progress = plan_progress(
@@ -199,7 +203,7 @@ async def get_plan_progress(
         plant_target=targets.plant_target,
         line_plan=targets.line_plan,
         line_plan_by_product=line_plan_by_product(cfg, month, rows),
-        daily_output=await daily_output(session, cfg, month, as_of=as_of),
+        daily_output=daily,
     )
     body = plan_progress_json(progress)
     body["targets_source"] = targets.source
