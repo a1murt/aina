@@ -18,24 +18,47 @@ import { cn } from "@/lib/utils";
 
 /**
  * The engine publishes an `alert` message when it decides and commits the row on its next commit
- * (about a second later), so the lists are re-read once after a short delay. One watcher serves
- * the whole tab, however many lists are mounted (VIS-19): a burst of messages → one refresh.
+ * (about a second later), so the lists are re-read once the messages settle: a trailing debounce
+ * of ALERT_REFRESH_DELAY_MS after the LAST message of a burst, so every row of a cascade (a chain
+ * break → andon → buffer) is committed by then. A stream that never pauses is still refreshed every
+ * ALERT_REFRESH_MAX_WAIT_MS, with one more refresh for its last message. One watcher serves the
+ * whole tab, however many lists are mounted (VIS-19): a burst of messages → one refresh.
  */
 const ALERT_REFRESH_DELAY_MS = 1_600;
+const ALERT_REFRESH_MAX_WAIT_MS = 5_000;
 let watchers = 0;
 let unsubscribe: (() => void) | null = null;
 let pending: ReturnType<typeof setTimeout> | null = null;
+let burstStart = 0;
+let lastMessage = 0;
 const followers = new Set<() => void>();
+
+function arm(now: number): void {
+  if (pending) clearTimeout(pending);
+  const due = Math.min(lastMessage + ALERT_REFRESH_DELAY_MS, burstStart + ALERT_REFRESH_MAX_WAIT_MS);
+  pending = setTimeout(fire, Math.max(0, due - now));
+}
+
+function fire(): void {
+  pending = null;
+  void invalidateQueries({ queryKey: ["alerts"] });
+  for (const fn of followers) fn();
+  // forced by the max wait while messages keep coming: the newest row may not be committed yet
+  const now = performance.now();
+  if (now - lastMessage < ALERT_REFRESH_DELAY_MS) {
+    burstStart = now;
+    arm(now);
+  }
+}
 
 function watchAlerts(): () => void {
   if (watchers++ === 0) {
     unsubscribe = useLive.subscribe((s, prev) => {
-      if (s.alertSeq === prev.alertSeq || pending) return;
-      pending = setTimeout(() => {
-        pending = null;
-        void invalidateQueries({ queryKey: ["alerts"] });
-        for (const fn of followers) fn();
-      }, ALERT_REFRESH_DELAY_MS);
+      if (s.alertSeq === prev.alertSeq) return;
+      const now = performance.now();
+      if (!pending) burstStart = now;
+      lastMessage = now;
+      arm(now);
     });
   }
   return () => {

@@ -127,7 +127,8 @@ export function MaintenanceView() {
 
   // The card keeps the unit it opened with: the first row once the rankings are known, then only a
   // click changes it — re-sorting on every refetch must not switch the card by itself (FE-18).
-  const ranked = Boolean(alerts.data) && (!canPred || Boolean(predictions.data) || Boolean(predictions.error));
+  // A failed list counts as known (ranked without it), so an API error never hides the card.
+  const ranked = (Boolean(alerts.data) || Boolean(alerts.error)) && (!canPred || Boolean(predictions.data) || Boolean(predictions.error));
   const first = ranked ? (rows[0]?.e.code ?? null) : null;
   useEffect(() => {
     if (selected === null && first) setSelected(first);

@@ -220,7 +220,7 @@ function PChart({ area }: { area: SpcArea }) {
         },
       },
       {
-        name: "UCL",
+        name: t("ucl"),
         type: "line",
         step: "middle",
         data: area.points.map((p) => pct(p.ucl)),
@@ -229,7 +229,7 @@ function PChart({ area }: { area: SpcArea }) {
         itemStyle: { color: c.alarm },
       },
       {
-        name: "LCL",
+        name: t("lcl"),
         type: "line",
         step: "middle",
         data: area.points.map((p) => pct(p.lcl)),

@@ -85,12 +85,19 @@ export function ImportView() {
     const picked = Array.from(list ?? []);
     if (!picked.length || busy) return;
     const t0 = performance.now();
-    const previous = report;
-    setReport(null);
+    // A re-check keeps the audit on screen until the new one arrives: on any failure it stays,
+    // with the error shown next to it (the first demo step must never go blank).
+    if (!reanalyse) setReport(null);
     setPhase({ kind: "upload", pct: 0, reanalyse });
+    // the audit stays on screen; the reason goes under «Подробнее»
+    const failedRecheck = (why: string, detail: string | null): Phase => ({
+      kind: "error",
+      title: t("reanalyseFailed"),
+      detail: [why, detail].filter(Boolean).join(" · "),
+      problems: [],
+    });
     const keepPrevious = () => {
       setReanalyseOff(true);
-      setReport(previous);
       setPhase({ kind: "idle" });
     };
     try {
@@ -111,10 +118,11 @@ export function ImportView() {
       const e = describe(err);
       const raw = (res.body ?? {}) as { problems?: Array<{ msg?: string; message?: string } | string> };
       const problems = (raw.problems ?? []).map((x) => (typeof x === "string" ? x : (x.msg ?? x.message ?? JSON.stringify(x))));
-      setPhase({ kind: "error", title: res.status === 403 ? t("forbidden") : e.text, detail: e.detail, problems });
+      const title = res.status === 403 ? t("forbidden") : e.text;
+      setPhase(reanalyse ? failedRecheck(title, e.detail) : { kind: "error", title, detail: e.detail, problems });
     } catch (err) {
       const e = describe(err instanceof NetworkError ? err : new NetworkError(String(err)));
-      setPhase({ kind: "error", title: e.text, detail: null, problems: [] });
+      setPhase(reanalyse ? failedRecheck(e.text, e.detail) : { kind: "error", title: e.text, detail: null, problems: [] });
     }
   }
 
@@ -384,15 +392,16 @@ function ResultLine({ report, elapsed }: { report: ImportReport; elapsed: number
   const t = useTranslations("import.report");
   const plant = usePlant();
   const ms = analysisMs(report);
-  const secs = (x: number) => plant.fmt.num(x, x < 0.1 ? 2 : 1);
+  // A parse takes milliseconds: under a second the duration is shown in ms, never as «0,01 с».
+  const dur = (x: number) => (x < 1000 ? t("durMs", { n: plant.fmt.num(Math.max(1, Math.round(x)), 0) }) : t("durS", { n: plant.fmt.num(x / 1000, 1) }));
   const fresh = report.reanalysed === true || report.job.created === true;
   if (fresh) {
-    const s = ms != null ? ms / 1000 : elapsed;
-    if (s == null) return null;
+    const d = ms ?? (elapsed != null ? elapsed * 1000 : null);
+    if (d == null) return null;
     return (
       <span className="ml-auto flex items-center gap-1.5 font-semibold tabular-nums" data-testid="import-elapsed">
         <Timer aria-hidden className="size-4" />
-        {t(report.reanalysed ? "reanalysed" : "elapsed", { s: secs(s) })}
+        {t(report.reanalysed ? "reanalysed" : "elapsed", { d: dur(d) })}
       </span>
     );
   }
@@ -400,7 +409,7 @@ function ResultLine({ report, elapsed }: { report: ImportReport; elapsed: number
   return (
     <span className="ml-auto flex items-center gap-1.5 text-muted-foreground tabular-nums" title={t("cachedHint")} data-testid="import-cached">
       <History aria-hidden className="size-4" />
-      {ms != null ? t("cachedWithTime", { when, s: secs(ms / 1000) }) : t("cached", { when })}
+      {ms != null ? t("cachedWithTime", { when, d: dur(ms) }) : t("cached", { when })}
     </span>
   );
 }

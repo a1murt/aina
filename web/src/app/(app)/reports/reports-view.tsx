@@ -65,7 +65,7 @@ export function ReportsView() {
               className="h-9 min-w-56 rounded-md border bg-background px-2 text-sm text-foreground"
               data-testid="report-shift"
             >
-              {options.length ? null : <option value="">{closed.isLoading ? "…" : t("noClosed")}</option>}
+              {options.length ? null : <option value="">{!closed.data && !closed.error ? "…" : t("noClosed")}</option>}
               {options.map((o) => {
                 const [d = "", c = ""] = o.split("/");
                 const spec = shiftSpec(c);
