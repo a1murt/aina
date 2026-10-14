@@ -264,5 +264,5 @@ async def test_demo_auto_pause_after_the_configured_minutes(cfg: TwinConfig) -> 
     assert clock(bus).paused
     await runner.start()  # «Пуск» continues past the threshold on demand
     await advance(runner, mono, 2)
-    assert runner.state == "running"
+    assert runner.status()["state"] == "running"
     assert runner.plant_time == demo + timedelta(minutes=after + 10)
