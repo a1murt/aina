@@ -201,7 +201,8 @@
     },
     "earlyEstimate": "ранняя оценка: {value}",
     "lossChip": "≈ −{units} авто",
-    "modelLegend": "Модели кузовов"
+    "modelLegend": "Модели кузовов",
+    "tvExit": "Выйти из режима ТВ"
   },
   "operator": {
     "terminal": "Терминал оператора",

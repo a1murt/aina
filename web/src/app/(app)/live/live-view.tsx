@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ListTodo, Tv } from "lucide-react";
+import { Activity, ListTodo, Tv, X } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -72,10 +72,35 @@ export function LiveView() {
             <PlantClock large />
             <SpeedBadge />
             <ConnectionBadge />
+            <Link
+              href="/live"
+              aria-label={t("tvExit")}
+              title={t("tvExit")}
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-40 hover:bg-accent hover:text-foreground hover:opacity-100 focus-visible:opacity-100"
+            >
+              <X aria-hidden className="size-4" />
+            </Link>
           </div>
         </div>
-        <PlantSchema selected={selected} onSelect={setSelected} />
-        <LineKpis large />
+        {/* wall screen: schema and line KPIs, open stops (with the loss) and alerts beside them (VIS-15) */}
+        <div className="grid min-h-0 flex-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="flex min-w-0 flex-col gap-4">
+            <PlantSchema selected={selected} onSelect={setSelected} />
+            <LineKpis large />
+            <Card>
+              <CardHeader title={t("timeline.title")} icon={<Activity aria-hidden className="size-4" />} />
+              <CardBody>
+                <ShiftTimeline />
+              </CardBody>
+            </Card>
+          </div>
+          <Card className="flex max-h-[calc(100dvh-6.5rem)] min-h-0 flex-col overflow-hidden">
+            <CardHeader title={t("incidents.title")} icon={<ListTodo aria-hidden className="size-4" />} />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <Incidents onSelect={setSelected} />
+            </div>
+          </Card>
+        </div>
         <EquipmentDrawer code={selected} onClose={() => setSelected(null)} />
       </div>
     );

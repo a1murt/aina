@@ -200,7 +200,8 @@
     },
     "earlyEstimate": "ерте баға: {value}",
     "lossChip": "≈ −{units} авто",
-    "modelLegend": "Шанақ модельдері"
+    "modelLegend": "Шанақ модельдері",
+    "tvExit": "ТД режимінен шығу"
   },
   "operator": {
     "terminal": "Оператор терминалы",
