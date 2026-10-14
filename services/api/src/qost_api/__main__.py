@@ -1,9 +1,11 @@
-"""Entry point: ``python -m qost_api [serve|seed|import FILE...]``.
+"""Entry point: ``python -m qost_api [serve|seed|import FILE...|seed-reports]``.
 
 * ``serve`` (default): uvicorn on :8000.
 * ``seed``: ``make seed`` (FR-DB-01) — users of every role, reference tables, calendar, plan.
 * ``import FILE...``: import case files through the import service as the seeded ``admin``
   (``make demo``: ``data/case/source/case2_data.docx``); idempotent by content.
+* ``seed-reports --last N``: template shift reports for the last N closed shifts of plant time
+  (``make demo`` after the replay), written by the internal ``system`` principal; idempotent.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import uvicorn
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+    from qost_api.auth import Principal
     from qost_api.settings import ApiSettings
     from twin_core.clock import Clock
     from twin_core.config import TwinConfig
@@ -141,6 +144,70 @@ def cmd_import(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _plant_now(cfg: TwinConfig, settings: ApiSettings, at: str | None) -> datetime:
+    """Plant time for a CLI command: ``--at``, the simulator clock in Redis, else the seed
+    time (demo start in sim mode, wall time otherwise)."""
+    from twin_core.clock import RedisKV, SimClock, SystemClock, ensure_utc
+
+    if at:
+        moment = datetime.fromisoformat(at.replace("Z", "+00:00"))
+        return ensure_utc(moment if moment.tzinfo else moment.replace(tzinfo=cfg.timezone))
+    if settings.clock_mode == "sim" and settings.redis_enabled:
+        sim = SimClock(RedisKV.from_url(settings.redis_url))
+        try:
+            if await sim.refresh() is not None:
+                return sim.now()
+        except Exception:  # no Redis or no clock yet (redis errors are not OSError)
+            pass
+    return _seed_now(cfg, settings, SystemClock())
+
+
+def cmd_seed_reports(args: argparse.Namespace) -> int:
+    from qost_api.forecast.data import DbForecastBackend
+    from qost_api.forecast.service import ForecastService
+    from qost_api.llm import create_provider
+    from qost_api.reports.data import DbReportBackend
+    from qost_api.reports.seed import SYSTEM_PRINCIPAL, seed_reports
+    from qost_api.reports.service import ReportService
+    from qost_api.settings import ApiSettings
+    from twin_core.clock import ManualClock
+    from twin_core.forecast.result import ForecastResult
+    from twin_core.health import load_config_or_exit
+    from twin_core.log import configure_logging
+
+    log = configure_logging(SERVICE)
+    cfg = load_config_or_exit(SERVICE)
+    settings = ApiSettings()
+    if not settings.database_url:
+        print("seed-reports: DATABASE_URL is not set", file=sys.stderr)
+        return 2
+
+    async def run() -> list[dict[str, object]]:
+        engine, sessions = _sessions(str(settings.database_url))
+        try:
+            now = await _plant_now(cfg, settings, args.at)
+            clock = ManualClock(now)
+            forecasts = ForecastService(cfg, clock, DbForecastBackend(sessions))
+
+            async def outlook(month: str, principal: Principal) -> ForecastResult | None:
+                return await forecasts.outlook(month, principal)
+
+            service = ReportService(
+                cfg, clock, DbReportBackend(sessions), create_provider(), outlook
+            )
+            done = await seed_reports(
+                service, cfg, now=now, last=args.last, lang=args.lang, principal=SYSTEM_PRINCIPAL
+            )
+            return [d.as_dict() for d in done]
+        finally:
+            await engine.dispose()
+
+    reports = asyncio.run(run())
+    log.info("seed_reports_done", reports=reports)
+    print(json.dumps({"reports": reports}, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qost_api")
     sub = parser.add_subparsers(dest="cmd")
@@ -149,8 +216,18 @@ def main(argv: list[str] | None = None) -> int:
     imp = sub.add_parser("import", help="import case files as a seeded user")
     imp.add_argument("files", nargs="+")
     imp.add_argument("--user", default="admin")
+    rep = sub.add_parser("seed-reports", help="template reports for the last closed shifts")
+    rep.add_argument("--last", type=int, default=3, help="number of closed shifts (default 3)")
+    rep.add_argument("--lang", choices=("ru", "kk"), default="ru")
+    rep.add_argument("--at", default=None, help="plant time (ISO); default: the plant clock")
     args = parser.parse_args(argv)
-    handlers = {"serve": cmd_serve, None: cmd_serve, "seed": cmd_seed, "import": cmd_import}
+    handlers = {
+        "serve": cmd_serve,
+        None: cmd_serve,
+        "seed": cmd_seed,
+        "import": cmd_import,
+        "seed-reports": cmd_seed_reports,
+    }
     return handlers[args.cmd](args)
 
 
