@@ -33,10 +33,20 @@ export interface PlantClock {
   shift: { date: string; code: string; elapsed_min?: number } | null;
 }
 
-interface LiveState {
+export interface LiveState {
   status: ConnectionStatus;
   ready: boolean;
   clock: PlantClock | null;
+  /** Plant clock paused (demo console pause or speed 0); false before the first clock. */
+  paused: boolean;
+  /** Simulator run epoch reported by the engine in the last snapshot (null = unknown). */
+  epoch: number | null;
+  /**
+   * Plant timeline generation in this tab: +1 whenever a restart is detected (the snapshot
+   * epoch changes or plant time jumps back, e.g. after a demo reset). Data fetched before the
+   * change is stale — key refetches on this value.
+   */
+  epochSeq: number;
   lines: Record<string, LineLive>;
   equipment: Record<string, EquipmentLive>;
   buffers: Record<string, BufferLive>;
@@ -72,6 +82,16 @@ function clockOf(c: ClockLive | null | undefined): PlantClock | null {
   };
 }
 
+/**
+ * Plant time only moves forward; a jump back by more than this (plant ms) means the timeline was
+ * restarted. The margin absorbs extrapolation jitter of the clock at high simulation speeds.
+ */
+const REWIND_TOLERANCE_MS = 5 * 60_000;
+
+function rewound(prev: PlantClock | null, next: PlantClock | null): boolean {
+  return prev !== null && next !== null && next.plantMs < prev.plantMs - REWIND_TOLERANCE_MS;
+}
+
 const unitListeners = new Set<(u: UnitEvent) => void>();
 
 /** Subscribe to completed units (body animation); returns the unsubscribe function. */
@@ -86,6 +106,9 @@ export const useLive = create<LiveState>((set) => ({
   status: "connecting",
   ready: false,
   clock: null,
+  paused: false,
+  epoch: null,
+  epochSeq: 0,
   lines: {},
   equipment: {},
   buffers: {},
@@ -99,28 +122,43 @@ export const useLive = create<LiveState>((set) => ({
   lastMessageAt: 0,
   setStatus: (status) => set({ status }),
   applySnapshot: (s) =>
-    set((prev) => ({
-      ready: true,
-      clock: clockOf(s.clock) ?? prev.clock,
-      lines: byCode(s.lines),
-      equipment: byCode(s.equipment),
-      buffers: byCode(s.buffers),
-      areas: byCode(s.areas),
-      plant: s.plant ?? null,
-      bottleneck: s.bottleneck,
-      alertsOpen: s.alerts_open,
-      downtimeOpen: Object.fromEntries((s.downtime_open ?? []).map((d) => [d.entity, d])),
-      alertSeq: prev.alertSeq + 1,
-      stateSeq: prev.stateSeq + 1,
-      lastMessageAt: performance.now(),
-    })),
+    set((prev) => {
+      const clock = clockOf(s.clock) ?? prev.clock;
+      const reported = s.engine?.epoch ?? null;
+      const epochChanged = reported !== null && prev.epoch !== null && reported !== prev.epoch;
+      const restarted = prev.ready && (epochChanged || rewound(prev.clock, clock));
+      return {
+        ready: true,
+        clock,
+        paused: clock?.paused ?? false,
+        epoch: reported ?? prev.epoch,
+        epochSeq: restarted ? prev.epochSeq + 1 : prev.epochSeq,
+        lines: byCode(s.lines),
+        equipment: byCode(s.equipment),
+        buffers: byCode(s.buffers),
+        areas: byCode(s.areas),
+        plant: s.plant ?? null,
+        bottleneck: s.bottleneck,
+        alertsOpen: s.alerts_open,
+        downtimeOpen: Object.fromEntries((s.downtime_open ?? []).map((d) => [d.entity, d])),
+        alertSeq: prev.alertSeq + 1,
+        stateSeq: prev.stateSeq + 1,
+        lastMessageAt: performance.now(),
+      };
+    }),
   applyMessage: (type, data) =>
     set((prev) => {
       const now = performance.now();
       switch (type) {
         case "clock": {
           if (data.event === "tick" && typeof data.plant_time === "string") {
-            return { clock: clockOf(data as unknown as ClockLive), lastMessageAt: now };
+            const clock = clockOf(data as unknown as ClockLive);
+            return {
+              clock,
+              paused: clock?.paused ?? false,
+              epochSeq: rewound(prev.clock, clock) ? prev.epochSeq + 1 : prev.epochSeq,
+              lastMessageAt: now,
+            };
           }
           return { lastMessageAt: now, stateSeq: prev.stateSeq + 1 };
         }
@@ -191,4 +229,21 @@ export function plantNow(clock: PlantClock | null, nowPerf: number = performance
   if (!clock) return null;
   const factor = clock.paused ? 0 : clock.speed;
   return clock.plantMs + (nowPerf - clock.receivedAt) * factor;
+}
+
+// ------------------------------------------------------------------ selectors
+
+export const selectClock = (s: LiveState): PlantClock | null => s.clock;
+export const selectPaused = (s: LiveState): boolean => s.paused;
+export const selectEpoch = (s: LiveState): number | null => s.epoch;
+export const selectEpochSeq = (s: LiveState): number => s.epochSeq;
+
+/** True while the plant clock is paused (re-renders only when it flips). */
+export function usePaused(): boolean {
+  return useLive(selectPaused);
+}
+
+/** Plant timeline generation: changes after a demo reset — use as a refetch key. */
+export function useEpochSeq(): number {
+  return useLive(selectEpochSeq);
 }

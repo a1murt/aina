@@ -63,7 +63,15 @@ export function PlantProvider({ children }: { children: ReactNode }) {
     const assets = assetsQ.data ?? null;
     // Until /assets arrives the browser zone is used; screens wait for assets before showing times.
     const tz = assets?.site.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const fmt = makeFmt(tz, { bn: tu("bn"), mn: tu("mn"), k: tu("k"), currency: tu("currency") });
+    const fmt = makeFmt(tz, {
+      bn: tu("bn"),
+      mn: tu("mn"),
+      k: tu("k"),
+      currency: tu("currency"),
+      h: tu("h"),
+      min: tu("min"),
+      s: tu("s"),
+    });
     const name = (o: Named | null | undefined, fallback = "—") =>
       !o ? fallback : locale === "kk" && o.name_kk ? o.name_kk : o.name_ru;
     const lines: Plant["lines"] = {};

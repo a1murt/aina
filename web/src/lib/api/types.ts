@@ -218,6 +218,8 @@ export interface Snapshot {
   areas?: AreaLive[];
   plant?: PlantLive | null;
   downtime_open?: DowntimeLive[];
+  /** Engine meta: last processed event time and the simulator run epoch (null until the first reset). */
+  engine?: { ts: string | null; epoch: number | null } | null;
 }
 export interface UnitEvent {
   line: string;
