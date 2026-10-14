@@ -87,8 +87,10 @@ async function step(name, fn) {
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const { ctx, sim } = await api();
+  // reset keeps the pause (demo-reset protocol), so the clock is started explicitly
   await sim("reset");
   await sim("speed", { value: 60 });
+  await sim("start");
 
   const browser = await chromium.launch();
   const context = await browser.newContext({
@@ -138,7 +140,8 @@ async function main() {
     await page.getByTestId("node-CONV-03").waitFor({ timeout: 10_000 });
     await page.locator('[data-testid="node-CONV-03"][data-state="DOWN_UNPLANNED"]').waitFor({ timeout: 10_000 });
     await sleep(2500);
-    await say("Схема краснеет за секунду, мастер получает оповещение с оценкой влияния на выпуск");
+    await say("Схема краснеет за секунду, мастер получает оповещение с ценой простоя в машинах");
+    await page.getByTestId("loss-chip").first().waitFor({ timeout: 15_000 }).catch(() => {});
     await sleep(3500);
     await page.getByTestId("node-CONV-03").click().catch(() => {});
     await sleep(4000);
@@ -181,20 +184,34 @@ async function main() {
     await scroll(page, 700, 6);
     await sleep(3000);
     await page.mouse.wheel(0, -2000);
-    await say("What-if: брак окраски 3% + субботняя смена 17.10 → пересчёт за секунду");
+    await say("What-if: брак окраски 3% + субботняя смена 17.10 → новый прогноз за секунды");
     await page.getByTestId("open-what-if").click();
     await sleep(1500);
     await page.getByTestId("defect-PAINT").fill("3");
     await sleep(800);
-    await page.getByTestId("extra-shifts").locator("button").first().click();
+    await page.getByTestId("shift-2026-10-17-A").click();
     await sleep(1200);
     await page.getByTestId("what-if-run").click();
     await page.getByTestId("scenario-comparison").first().waitFor({ timeout: 15_000 });
     await sleep(6500);
-    await page.keyboard.press("Escape").catch(() => {});
-    await say("Рычаги с эффектом в машинах и тенге; эффект «с системой» ≈ 67 млн ₸ в месяц (допущения помечены)");
+    // the what-if panel is non-modal: Esc closes it only while focus is inside, so use ✕
+    await page.getByRole("dialog").getByRole("button", { name: "Закрыть" }).click();
+    await sleep(1000);
+    await say("Рычаги с эффектом в машинах и тенге; эффект «с системой» ≈ 80 млн ₸ в месяц (допущения помечены)");
     await scroll(page, 1200, 8);
     await sleep(4000);
+  });
+
+  await step("copilot", async () => {
+    await page.mouse.wheel(0, -3000);
+    await say("Копилот: вопрос простыми словами — ответ по данным системы с вызванными инструментами, без внешних сервисов");
+    await page.getByTestId("copilot-open").click();
+    await sleep(1500);
+    await page.getByTestId("copilot-panel").getByRole("button").last().click();
+    await page.getByTestId("copilot-answer").first().waitFor({ timeout: 15_000 });
+    await sleep(7000);
+    await page.getByRole("dialog").getByRole("button", { name: "Закрыть" }).click();
+    await sleep(800);
   });
 
   await card(page, "Готово к пилоту", [
@@ -203,6 +220,7 @@ async function main() {
     "github.com/a1murt/aina",
   ], 7000);
 
+  await sim("pause").catch(() => {});
   const video = page.video();
   await context.close();
   await browser.close();
