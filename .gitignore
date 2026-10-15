@@ -51,3 +51,6 @@ data/case/source/
 # Local developer notes (not published)
 CLAUDE.md
 docs/plans/
+docs/DEMO.md
+tools/demo_numbers.py
+tests/tools/test_demo_numbers.py

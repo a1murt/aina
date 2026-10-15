@@ -1,4 +1,4 @@
-"""Effects of the demo scenarios S1–S5 (simulation.yaml ``scenarios``, SPEC §6.9, §17).
+"""Effects of the demo scenarios S1–S5 (simulation.yaml ``scenarios``, SPEC §6.9).
 
 Every scenario run is compared with a baseline run of the same seed: the model uses named random
 streams per entity, so both runs share their random numbers (common random numbers).

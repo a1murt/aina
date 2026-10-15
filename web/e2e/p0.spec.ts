@@ -6,8 +6,9 @@ import path from "node:path";
  * T-E2E (SPEC §16): login of every role → start page; import docx → 10 DQ and 6 alerts;
  * S1 → CONV-03 red on /live + alert; reason classified on the terminal → visible on /live;
  * what-if changes P50; alert ack. Needs `make demo` (seeded users, password DEMO_PASSWORD).
+ * The stand may be paused (the stand protocol leaves it paused and a reset keeps the pause): beforeAll
  * resets, sets ×10 and presses «Пуск». The suite leaves the simulator RUNNING at ×10 — before a
- * show, pause it and run the §3.2 protocol again from step 4 (`make demo-reset`, `make demo-check`).
+ * show, pause it and run the stand protocol again (`make demo-reset`, `make demo-check`).
  */
 const PASSWORD = process.env.DEMO_PASSWORD ?? "qost2026";
 // The plant's original docx is not in the repository; fall back to the xlsx copy (same golden).

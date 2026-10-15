@@ -5,6 +5,7 @@ import { defineConfig, devices } from "@playwright/test";
  * http://localhost:3000, the compose `web` service), API through its /api proxy.
  * The scenarios share one plant, so they run serially in one worker. They work on a paused stand
  * (p0 resets, sets ×10 and starts it; stage starts it) and leave the simulator running: before a
+ * show, pause and repeat the stand protocol (reset, pause, make demo-check).
  */
 export default defineConfig({
   testDir: "./e2e",
