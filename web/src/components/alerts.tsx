@@ -262,7 +262,13 @@ export function AlertsBell() {
     const onDoc = (e: MouseEvent) => {
       if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // this Esc closes the drop-down only, not a non-modal panel open under it (what-if):
+      // Sheet listens on window, after document, and skips a handled key
+      e.preventDefault();
+      setOpen(false);
+    };
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
     return () => {
