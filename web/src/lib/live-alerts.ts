@@ -24,6 +24,7 @@ export interface LiveAlert {
   title_ru: string;
   message_ru: string;
   value: unknown;
+  /** As the database keeps it: `ack` stays until `resolved`, whatever the engine's updates say. */
   status: AlertView["status"];
   /** Wall ms (Date.now) of the first message for this key in this tab. */
   firstSeenAt: number;
@@ -79,6 +80,10 @@ export function noteAlert(
     return null;
   }
   const old = prev[key];
+  // as the database keeps it: an engine update saying `open` does not undo an acknowledgement,
+  // only `resolved` does (engine writer, alert upsert) — else a stop acknowledged within the
+  // grace of its raise would come back as a pending row with its next minute update
+  const kept = old?.status === "ack" && status === "open" ? "ack" : (status as LiveAlert["status"]);
   const tsMs = Date.parse(ts);
   const lag = Math.max(RAISE_LAG_MIN_PLANT_MS, Math.max(0, speed) * RAISE_LAG_WALL_MS);
   const raisedNow = old ? old.raisedNow : plantNowMs === null || Number.isNaN(tsMs) || tsMs >= plantNowMs - lag;
@@ -94,7 +99,7 @@ export function noteAlert(
       title_ru: str(data, "title_ru") ?? rule,
       message_ru: str(data, "message_ru") ?? "",
       value: data.value ?? null,
-      status: status as LiveAlert["status"],
+      status: kept,
       firstSeenAt: old?.firstSeenAt ?? nowMs,
       receivedAt: nowMs,
       raisedNow,

@@ -95,6 +95,24 @@ test("an alert announced as acknowledged or resolved leaves the feed before the 
   assert.equal(mergeAlerts([], t0 - 100, resolved).length, 0);
 });
 
+test("an acknowledged stop stays out of the feed: the engine's minute update does not undo the ack", () => {
+  const t0 = 5_000_000;
+  let live = noteAlert({}, S1, t0, PLANT_NOW, 60);
+  // «Принять» 6 s after the raise (inside the grace), the list re-read after the ack lacks it
+  live = noteAlert(live, { ...S1, status: "ack" }, t0 + 6_000, PLANT_NOW + 360_000, 60);
+  // the running stop's next minute update says «open» (the database keeps «ack»)
+  live = noteAlert(live, { ...S1, message_ru: "…7 мин" }, t0 + 7_000, PLANT_NOW + 420_000, 60);
+  assert.equal(live[S1.dedup_key].status, "ack");
+  assert.equal(live[S1.dedup_key].message_ru, "…7 мин");
+  assert.equal(mergeAlerts([], t0 + 6_500, live).length, 0);
+  // a list read just before the ack commit does not show it either
+  assert.equal(mergeAlerts([listed()], t0 + 5_500, live).length, 0);
+  // resolved, then raised again under the same key: open
+  live = noteAlert(live, { ...S1, status: "resolved" }, t0 + 9_000, PLANT_NOW + 540_000, 60);
+  live = noteAlert(live, S1, t0 + 10_000, PLANT_NOW + 600_000, 60);
+  assert.equal(live[S1.dedup_key].status, "open");
+});
+
 test("partial messages are ignored; the memory is bounded", () => {
   assert.equal(noteAlert({}, { dedup_key: S1.dedup_key, escalation_level: 1, notify: ["director"] }, 1, PLANT_NOW, 60), null);
   assert.equal(noteAlert({}, { ...S1, severity: "fatal" }, 1, PLANT_NOW, 60), null);
