@@ -1,3 +1,4 @@
+// Records the demo scenario (SPEC §17) as a silent screen video with Russian captions.
 // Needs a running `make demo` stack. Usage: node web/scripts/record-demo.mjs [outDir]
 // Output: <outDir>/aina-demo.webm (default outDir: var/demo-video).
 import fs from "node:fs";
@@ -107,12 +108,14 @@ async function main() {
 
   await card(page, "Aina", [
     "Цифровой двойник автомобильного завода",
+    "Мониторинг, прогноз выполнения плана и предиктивное ТОиР · ISA-95 · ISO 22400",
     "Запись демо: виртуальный завод отдаёт данные по OPC UA / MQTT, скорость 60×",
   ], 6000);
 
   await step("import", async () => {
     await login(page, "director");
     await page.goto(`${BASE}/import`);
+    await say("1. Загружаем выгрузку завода как есть — система за секунды проверяет данные завода");
     await sleep(2500);
     await page.getByTestId("file-input").setInputFiles(CASE_FILE);
     await page.getByTestId("import-report").waitFor({ timeout: 20_000 });

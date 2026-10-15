@@ -10,7 +10,7 @@ import path from "node:path";
  * show, pause it and run the §3.2 protocol again from step 4 (`make demo-reset`, `make demo-check`).
  */
 const PASSWORD = process.env.DEMO_PASSWORD ?? "qost2026";
-// The organisers' docx is not published in the repository; fall back to the xlsx copy (same golden).
+// The plant's original docx is not in the repository; fall back to the xlsx copy (same golden).
 const CASE_DOCX_PATH = path.resolve(__dirname, "../../data/case/source/case2_data.docx");
 const CASE_DOCX = fs.existsSync(CASE_DOCX_PATH)
   ? CASE_DOCX_PATH

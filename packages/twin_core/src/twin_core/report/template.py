@@ -16,6 +16,7 @@ from twin_core.report.model import Deviation, Lang, ShiftInput, StopRow
 
 MAX_WORDS = 250
 KK_DRAFT = True
+"""Kazakh texts are a draft translation; check with a native speaker before the pilot."""
 
 SECTIONS: dict[Lang, tuple[str, str, str, str]] = {
     "ru": ("Итоги", "Отклонения", "Причины", "Задачи на следующую смену"),

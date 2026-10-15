@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # make demo (SPEC §17, NFR-08): build -> infrastructure -> migrations -> seed -> history
-# (sim backfill 01.09 -> demo_start into the DB + engine replay) -> case import -> live services.
+# (sim backfill 01.09 -> demo_start into the DB + engine replay) -> data import -> live services.
 #
 # Every step runs in the service images (docker compose run), so a clean clone needs only
 # Docker, make and bash. Infrastructure containers that already run are reused as they are
@@ -75,7 +75,7 @@ $DC run --rm --no-deps sim python -m qost_sim backfill --sink db: --batch-size 5
 step "history: engine replay (derived tables, checkpoint, baseline)"
 $DC run --rm --no-deps engine python -m qost_engine replay
 
-# The organisers' original docx is not published in the repository; when it is absent the
+# The plant's original docx is not published in the repository; when it is absent the
 # xlsx copy (same golden result) is imported instead.
 CASE_FILE=data/case/source/case2_data.docx
 [ -f "$ROOT/$CASE_FILE" ] || CASE_FILE=data/case/csv/case2_data.xlsx

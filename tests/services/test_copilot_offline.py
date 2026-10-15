@@ -1,4 +1,4 @@
-"""Offline copilot (M21): ~40 Russian phrasings of a plant manager and a jury are answered, not
+"""Offline copilot: ~40 Russian phrasings of a plant manager and a customer are answered, not
 refused; every answer starts with a verdict, shows no raw API keys or ISO dates and groups
 thousands; the three prompts the UI suggests are answered by the expected tools."""
 
@@ -41,7 +41,7 @@ GUARANTEED = {
 }
 
 QUESTIONS = [
-    # the 12 questions of the audit (copilot_eval.txt)
+    # the 12 questions of the copilot evaluation set
     "Почему вчера просела сварка?",
     "Какое оборудование в зоне риска?",
     "Какие потери за смену и где узкое место?",
@@ -54,7 +54,7 @@ QUESTIONS = [
     "Сравни OEE сварки и окраски за неделю",
     "Какое оборудование чаще всего ломается?",
     "Сколько стоит час простоя окраски?",
-    # the prompts of the panel and the other phrasings of the audit
+    # the prompts of the panel and other phrasings of the same questions
     "Почему 08.10 просела сварка?",
     "Выполним ли план месяца и что мешает?",
     "Какое оборудование больше всего простаивало?",

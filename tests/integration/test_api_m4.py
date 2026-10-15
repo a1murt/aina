@@ -1,4 +1,4 @@
-"""M4 API against TimescaleDB + Redis: seed (FR-DB-01), history (backfill + replay), case import
+"""M4 API against TimescaleDB + Redis: seed (FR-DB-01), history (backfill + replay), data import
 through the API, KPI / losses / timeline / plan / bottleneck / equipment over that history,
 director queries p95 ≤ 300 ms over a full month (FR-DB-02), alerts and DQ flows, operator
 actions → ``events`` stream, thresholds in ``settings``, AL-P1.
@@ -576,7 +576,7 @@ def test_downtime_window_skips_imported_stops_of_other_days(
     director = login(client, "director")
     every = client.get("/api/v1/downtime?limit=500", headers=director).json()["items"]
     days = {i["shift_date"] for i in every if i["import_id"] is not None}
-    assert days, "the case import wrote downtime"
+    assert days, "the source data import wrote downtime"
     later = client.get(
         "/api/v1/downtime?from=2026-10-15&to=2026-10-15&limit=500", headers=director
     ).json()["items"]

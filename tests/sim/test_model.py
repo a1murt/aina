@@ -147,9 +147,10 @@ def test_planned_maintenance_schedule(cfg: TwinConfig, calibration_run: Calibrat
 
 
 def test_no_planned_maintenance_on_demo_morning_for_scenario_units(cfg: TwinConfig) -> None:
+    """S1/S2/S3 must not collide with planned maintenance at 07:00 on the demo date."""
     model = PlantModel(cfg, start=cfg.simulation.clock.backfill_from)
-    demo_day = cfg.simulation.clock.demo_start.astimezone(model.tz).date()
-    wd = model.working_day_index(demo_day)
+    start_day = cfg.simulation.clock.demo_start.astimezone(model.tz).date()
+    wd = model.working_day_index(start_day)
     targets = {"CONV-03", "BOOTH-02", "ABB-04"}
     for pm in cfg.simulation.planned_maintenance:
         for unit in model.units_by_type[pm.equipment_type]:

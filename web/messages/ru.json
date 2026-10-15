@@ -110,6 +110,7 @@
     "ack": "Принять",
     "acked": "Принято {who}",
     "escalation": "эскалация {level}",
+    "imported": "из импорта данных",
     "expand": "Показать полностью"
   },
   "reasonPicker": {

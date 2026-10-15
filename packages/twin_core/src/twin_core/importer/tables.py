@@ -6,7 +6,7 @@ A table is recognized by the keywords of its header row (case-insensitive): line
 header keywords too, so their order does not matter. Tables of the same kind found in several
 files/sheets are concatenated.
 
-The keywords are the import file contract of SPEC §7.4 (the case's own Russian headers), not
+The keywords are the import file contract of SPEC §7.4 (the plant's own Russian headers), not
 plant configuration.
 """
 

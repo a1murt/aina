@@ -1,4 +1,4 @@
-"""T-GOLD: importing the case in every format reproduces ``import_expected.json`` (FR-IMP-05).
+"""T-GOLD: importing the data in every format reproduces ``import_expected.json`` (FR-IMP-05).
 
 The golden file is produced by the reference script ``data/case/expected/compute_expected.py``;
 this test runs the production pipeline (``twin_core.importer``: readers -> table recognition ->
@@ -98,7 +98,7 @@ def test_docx_constraints_come_from_text(cfg: TwinConfig) -> None:
 
 @pytest.mark.parametrize("variant", ["xlsx", "csv"])
 def test_tabular_constraints_fall_back_to_config(variant: str, cfg: TwinConfig) -> None:
-    # The case csv/xlsx carry no «Дополнительные вводные» text: constraints come from the config.
+    # The source csv/xlsx carry no «Дополнительные вводные» text: constraints come from the config.
     report = run_import(VARIANTS[variant](), cfg)
     assert {c.source for c in report.constraint_checks} == {"config"}
 

@@ -104,7 +104,7 @@ def test_serving_with_a_fake_predictor_covers_every_pdm_unit(cfg: TwinConfig) ->
     assert one.factors[0]["text_ru"].startswith("вибрация растёт")
     assert one.model_version == "fake-v1"
     assert one.horizon_h == 8
-    for _type, row in fake.calls:  # rule 5: the hidden wear state is not a feature
+    for _type, row in fake.calls:  # FR-SIM-02: the hidden wear state is not a feature
         assert not any("degradation" in name.lower() for name in row)
     assert tick.lookahead_h == cfg.rules.thresholds.telemetry_limit_lookahead_h
 

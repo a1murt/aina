@@ -190,7 +190,7 @@ export function DirectorView() {
   const defectLimit = thr?.defect_rate_limit ?? null;
   const worstDefect = [...areaRows].sort((a, b) => (b.defect_rate ?? 0) - (a.defect_rate ?? 0))[0];
   // the base forecast was re-read on a newer plant state than the scenario's own base: the
-  // scenario is kept in the panel, marked outdated, and left off the base charts (M18)
+  // scenario is kept in the panel, marked outdated, and left off the base charts
   const scenAll = outcome?.run.result ?? null;
   const staleSince = scenAll && r && Date.parse(r.as_of) > Date.parse(scenAll.as_of) ? r.as_of : null;
   const scenRun = staleSince ? null : scenAll;

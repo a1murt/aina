@@ -9,8 +9,7 @@
 * Feature grid — ``simulation.yaml: telemetry.backfill_sample_period_s`` (5 min, SPEC §6.5); window
   step — ``ml_dataset.window_min`` (15 min).
 
-The simulator's hidden wear (``degradation``, the oracle) is never a signal here (FR-SIM-02,
-rule 5).
+The simulator's hidden wear (``degradation``, the oracle) is never a signal here (FR-SIM-02).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ MICROSTOP_WINDOW_H = 24
 RATE_UNITS = frozenset({"1/ч", "1/h"})
 """Signals measured as events per hour (e.g. robot sensor errors) also get a 4 h count feature."""
 FORBIDDEN_TOKENS = ("degradation", "oracle")
-"""Rule 5 / FR-SIM-02: no feature may come from the simulator's hidden state."""
+"""FR-SIM-02: no feature may come from the simulator's hidden state."""
 
 
 class OracleLeakError(AssertionError):

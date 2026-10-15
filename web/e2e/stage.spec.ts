@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 /**
+ * Stage polish of /live, /operator and the shell: focus that stays where the user types,
  * a terminal toast that goes away, an honest connection badge, KPI never above 100 %, one open
  * stop for one chain break, labels that fit, a header without clipping, safe login redirect.
  * Runs after p0.spec.ts against the same `make demo` stack (S1 is injected there); actions that
@@ -32,6 +33,7 @@ async function percentages(page: Page, selector: string): Promise<number[]> {
   return texts.flatMap((t) => [...t.matchAll(/(-?\d+(?:,\d+)?)\s*%/g)].map((m) => Number((m[1] ?? "0").replace(",", "."))));
 }
 
+test.describe.serial("stage polish", () => {
   test.beforeAll(async ({ request }) => {
     await startPlant(request);
   });

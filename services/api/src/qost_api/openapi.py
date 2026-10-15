@@ -1,4 +1,4 @@
-"""OpenAPI document and the offline Swagger UI (SPEC §12.1, rule 6).
+"""OpenAPI document and the offline Swagger UI (SPEC §12.1, NFR-05).
 
 * ``/api/openapi.json`` — FastAPI's schema plus, per operation, ``x-roles`` (the roles allowed by
   its role dependency, also appended to the description), the bearer security requirement and

@@ -25,9 +25,10 @@ interface S1Value {
 
 /**
  * Loss estimates of the open stops, keyed by unit (S14, VIS-1d). The number is the engine's
- * AL-S1 value — the UI does not recompute it (rule 3). The query key sits under ["alerts"], so
- * every `alert` WS message (the engine re-raises AL-S1 as the stop grows) refreshes it through
- * the alerts feed; a slow poll covers screens without the feed (TV mode).
+ * AL-S1 value — the UI does not recompute it (estimates are computed only in the core, SPEC §5.4).
+ * The query key sits under ["alerts"], so every `alert` WS message (the engine re-raises AL-S1
+ * as the stop grows) refreshes it through the alerts feed; a slow poll covers screens without
+ * the feed (TV mode).
  */
 export function useStopImpacts(): Record<string, StopImpact> {
   const q = useQuery({

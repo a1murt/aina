@@ -1,6 +1,6 @@
 """Constraints from free text (FR-IMP-03) and their comparison with the configuration.
 
-Recognized sentences (as in the case's «Дополнительные вводные»)::
+Recognized sentences (as in the plant's «Дополнительные вводные»)::
 
     "2 смены по 8 часов"                         -> shifts_per_day, shift_hours
     "OEE - не менее 85%"                         -> oee_target

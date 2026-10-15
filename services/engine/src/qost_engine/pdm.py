@@ -8,7 +8,7 @@ time to a signal limit (AL-M2), every ``rules.yaml: engine.pdm_tick_min`` plant 
 * :class:`PdmServing` — pure and synchronous (run it in a thread): per unit
   ``qost_ml.features.history_from_arrays`` → ``features_at`` → ``Predictor.predict`` and, for
   signals with ``limit_hi``, :func:`twin_core.limits.unit_limit_advice` on the working-time axis.
-  The simulator's hidden wear state is never read (rule 5): features come from the telemetry,
+  The simulator's hidden wear state is never read (FR-SIM-02): features come from the telemetry,
   the stops and the exits only.
 
 ``qost_ml`` (LightGBM, SHAP) is imported when the serving is created, not when the engine starts

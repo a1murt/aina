@@ -16,6 +16,7 @@ from qost_api.settings import ApiSettings
 
 PROBLEM = "application/problem+json"
 NOW = datetime(2026, 10, 16, 4, 30, tzinfo=UTC)
+"""09:30 plant time on the demo date (shift A)."""
 
 
 def token(

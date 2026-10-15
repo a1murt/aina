@@ -74,7 +74,7 @@ def test_feature_list_per_spec(spec: PdmSpec) -> None:
 def test_degradation_is_never_a_feature(
     spec: PdmSpec, small_tables: dict[str, pl.DataFrame]
 ) -> None:
-    """Rule 5 / FR-SIM-02: the hidden oracle never reaches features or tables."""
+    """FR-SIM-02: the hidden oracle never reaches features or tables."""
     for equipment_type in spec.types:
         assert not [n for n in spec.feature_names(equipment_type) if "degradation" in n.lower()]
     for table in small_tables.values():

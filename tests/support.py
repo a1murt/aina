@@ -39,7 +39,7 @@ GOLDEN_JSON = CASE_DIR / "expected" / "import_expected.json"
 
 
 def require_case_docx() -> None:
-    """Skip when the organisers' original case files are absent: they are not published in the
+    """Skip when the plant's original source files are absent: they are not published in the
     repository (put them into ``data/case/source/`` locally); the CSV/XLSX copies stay."""
     if not CASE_DOCX.is_file():
         pytest.skip("data/case/source/case2_data.docx is not in the repository")

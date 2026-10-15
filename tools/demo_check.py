@@ -223,7 +223,7 @@ def check_clock(
         out.append(ok("clock", f"{local(plant, tz)}, пауза — готов к показу"))
     elif running:
         out.append(
-            warn("clock", f"симулятор идёт ({local(plant, tz)}) — перед выходом make demo-reset")
+            warn("clock", f"симулятор идёт ({local(plant, tz)}) — перед показом make demo-reset")
         )
     else:
         out.append(warn("clock", f"пауза не на старте ({local(plant, tz)}) — make demo-reset"))

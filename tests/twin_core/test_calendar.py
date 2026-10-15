@@ -32,6 +32,7 @@ def test_october_2026_d8(cal: PlantCalendar) -> None:
     assert cal.is_holiday(date(2026, 10, 26))
     assert not cal.is_working_day(date(2026, 10, 26))  # Monday, transferred day off
     assert not cal.is_working_day(date(2026, 10, 17))  # Saturday
+    assert cal.is_working_day(date(2026, 10, 16))  # demo date, Friday
 
 
 def test_shift_boundaries_in_utc(cal: PlantCalendar) -> None:

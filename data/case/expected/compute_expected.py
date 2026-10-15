@@ -1,4 +1,4 @@
-"""Reference implementation for the golden values of the case import.
+"""Reference implementation for the golden values of the source data import.
 
 Reads data/case/source/case2_data.docx, writes CSV/XLSX fixtures and
 data/case/expected/import_expected.json.

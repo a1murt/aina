@@ -1,4 +1,4 @@
-# Aina — developer commands (SPEC §18).
+# Aina — developer commands.
 # Compatible with GNU make 3.81 (macOS default).
 
 SHELL := /bin/bash
@@ -97,7 +97,7 @@ history: ## sim backfill 01.09 -> demo_start into the DB, then the engine recomp
 	DATABASE_URL=$(HOST_DATABASE_URL) REDIS_URL=$(HOST_REDIS_URL) $(UV) run --package qost-engine \
 		python -m qost_engine replay
 
-demo: .env ## build -> infra -> migrations -> seed -> history -> case import -> live (NFR-08; DEMO_FRESH=1: empty demo data)
+demo: .env ## build -> infra -> migrations -> seed -> history -> data import -> live (NFR-08; DEMO_FRESH=1: empty demo data)
 	COMPOSE="$(COMPOSE)" bash infra/demo.sh
 
 demo-reset: ## reset the live tail to demo_start (sim reset handshake; engine drops the tail, history kept)

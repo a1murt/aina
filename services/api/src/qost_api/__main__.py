@@ -2,7 +2,7 @@
 
 * ``serve`` (default): uvicorn on :8000.
 * ``seed``: ``make seed`` (FR-DB-01) — users of every role, reference tables, calendar, plan.
-* ``import FILE...``: import case files through the import service as the seeded ``admin``
+* ``import FILE...``: import plant source files through the import service as the seeded ``admin``
   (``make demo``: ``data/case/source/case2_data.docx``); idempotent by content.
 * ``seed-reports --last N``: template shift reports for the last N closed shifts of plant time
   (``make demo`` after the replay), written by the internal ``system`` principal; idempotent.
@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("serve", help="HTTP + WebSocket API (default)")
     sub.add_parser("seed", help="users, reference tables, calendar, plan (make seed)")
-    imp = sub.add_parser("import", help="import case files as a seeded user")
+    imp = sub.add_parser("import", help="import plant source files as a seeded user")
     imp.add_argument("files", nargs="+")
     imp.add_argument("--user", default="admin")
     rep = sub.add_parser("seed-reports", help="template reports for the last closed shifts")

@@ -82,6 +82,7 @@ areas:
       - code: WELD-1
         name_ru: "Сварка-1"
         aliases: ["Сварка-1"]
+        ict_seconds: 233            # лучший показанный цикл (BDR) по исходным данным завода, округлён вниз до секунды
         plan_rate_per_shift: 120
         rework: { stations: 1, minutes_median: 15 }
         equipment:

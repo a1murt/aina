@@ -1,4 +1,4 @@
-"""Import of the case files: ``.docx``, ``.xlsx``, ``.csv`` (SPEC §7.4, FR-IMP-01..07).
+"""Import of the plant source files: ``.docx``, ``.xlsx``, ``.csv`` (SPEC §7.4, FR-IMP-01..07).
 
 Pipeline (pure, no DB): :func:`read_upload` (format readers) -> :func:`parse_upload` (table
 recognition by headers, alias mapping, DQ-07) -> :func:`build_import_report` (KPIs ISO 22400,

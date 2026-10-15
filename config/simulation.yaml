@@ -1,8 +1,10 @@
 # Виртуальный завод (services/sim). Параметры подобраны так, чтобы устойчивый темп линии,
+# доля брака и простои совпадали по порядку с исходными данными завода (см. calibration_targets).
 # Все времена — заводское время (Asia/Qostanay). Длительности — минуты, если не указано иное.
 version: 1
 
 clock:
+  demo_start: "2026-10-16T07:00:00+05:00"     # «сейчас» для демо (день демонстрации, начало 1 смены)
   speed: 60                                   # 1 реальная секунда = 60 с заводского времени
   speed_presets: [1, 10, 60, 300]
   backfill_from: "2026-09-01T00:00:00+05:00"  # история для дашбордов, SPC, калибровки
@@ -119,6 +121,7 @@ ckd_supply:
   delay_days: { dist: triangular, min: 0, mode: 0.5, max: 2 }
 
 calibration_targets:          # проверяются тестом tests/sim/test_calibration.py на 20 рабочих днях
+  throughput_per_shift: { min: 112, max: 118 }       # исходные данные завода: 113–116 устойчиво
   defect_rate: { WELD: [0.015, 0.030], PAINT: [0.030, 0.055], ASSY: [0.008, 0.020] }
   unplanned_downtime_min_per_area_day: { min: 5, max: 70 }
   expected_bottleneck: PAINT-1                       # замены фильтров + перекраска; периодически WELD-1

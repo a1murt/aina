@@ -66,7 +66,7 @@ function analysisMs(r: ImportReport): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** /import — drag-and-drop of the case files and the «audit in 10 seconds» report (US-1, §7.4). */
+/** /import — drag-and-drop of source files and the «audit in 10 seconds» report (US-1, §7.4). */
 export function ImportView() {
   const t = useTranslations("import");
   const qc = useQueryClient();

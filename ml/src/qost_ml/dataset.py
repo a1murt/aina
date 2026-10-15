@@ -2,7 +2,7 @@
 
 Input — the parquet files of ``python -m qost_sim ml-dataset`` (``telemetry/``, ``downtime``,
 ``units``, ``meta.json``). ``oracle_degradation.parquet`` (the simulator's hidden wear) is never
-opened here (FR-SIM-02, project rule 5).
+opened here (FR-SIM-02).
 
 Output — ``{type}.parquet`` per PdM equipment type: one row per unit every ``ml_dataset.window_min``
 (15 min) from ``from + 24 h`` (full feature windows) to ``to − horizon`` (full label horizon), with

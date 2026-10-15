@@ -1,4 +1,4 @@
-"""FR-SIM-03: the virtual plant reproduces the case data (simulation.yaml calibration_targets)."""
+"""FR-SIM-03: the virtual plant reproduces the source data (simulation.yaml calibration_targets)."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def test_calibration_targets(cfg: TwinConfig, calibration_run: CalibrationRun) -
 
 
 def test_bottleneck_is_paint_with_weld_close(calibration_run: CalibrationRun) -> None:
-    """Expected bottleneck PAINT-1 (filters + repaint); WELD-1 the runner-up (case data)."""
+    """Expected bottleneck PAINT-1 (filters + repaint); WELD-1 the runner-up (plant source data)."""
     report, _model, _records = calibration_run
     share = report.flow_loss_share
     assert share["PAINT-1"] == min(share.values())

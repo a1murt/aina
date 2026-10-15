@@ -135,7 +135,7 @@ const dayKey = (s: string): number | null => {
 
 /**
  * An alert about an earlier day than the moment it was raised comes from an imported file (the
- * case data): the importer raises findings «now» about the days in the file, the engine raises
+ * source data): the importer raises findings «now» about the days in the file, the engine raises
  * them when the shift or day closes. The day is the first dd.MM.yyyy of the server text.
  */
 export function isImportedAlert(a: AlertView, plant: Plant): boolean {

@@ -2,7 +2,7 @@
 
 Every value is written with ``SourceTimestamp`` = plant time of the change, so a client (the
 collector) gets event times in plant time regardless of the wall clock. Nodes are read-only for
-clients; only this process writes (rule 4: no writes outside ``services/sim``).
+clients; only this process writes (FR-ING-05, T-RO: no writes outside ``services/sim``).
 """
 
 from __future__ import annotations
